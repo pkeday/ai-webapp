@@ -370,8 +370,31 @@ function buildCombinedSourceFingerprint() {
   ].join("|");
 }
 
+function buildNseListingByIsin() {
+  const nseListingByIsin = new Map();
+
+  // NSE store is newest-first, so first seen mapping is the freshest.
+  for (const item of stores.NSE.announcements) {
+    const isin = getAnnouncementIsin(item, "NSE");
+    if (!isin || nseListingByIsin.has(isin)) {
+      continue;
+    }
+
+    const symbol = getAnnouncementSymbol(item, "NSE");
+    const company = getAnnouncementCompany(item, "NSE");
+
+    nseListingByIsin.set(isin, {
+      symbol: symbol || null,
+      company: company || null
+    });
+  }
+
+  return nseListingByIsin;
+}
+
 function buildCombinedAnnouncements() {
   const sourceItems = [...stores.NSE.announcements, ...stores.BSE.announcements];
+  const nseListingByIsin = buildNseListingByIsin();
   const sourceSeen = new Set();
   const crossExchangeMap = new Map();
   const combined = [];
@@ -409,6 +432,9 @@ function buildCombinedAnnouncements() {
     const attachmentUrl = getAnnouncementAttachmentUrl(item, exchange) || null;
     const sourceAnnouncementKey = getAnnouncementKey(exchange, item);
     const sortTimestampMs = parseTimestampToMillis(timestamp) ?? parseTimestampToMillis(item?.insertedAt) ?? 0;
+    const nseListing = isin ? nseListingByIsin.get(isin) ?? null : null;
+    const displaySymbol = nseListing?.symbol || symbol || "-";
+    const displayCompany = nseListing?.company || company || "-";
 
     const sourceAnnouncement = {
       sourceKey,
@@ -417,6 +443,8 @@ function buildCombinedAnnouncements() {
       timestamp,
       symbol,
       company,
+      displaySymbol,
+      displayCompany,
       type,
       attachmentUrl,
       isin
@@ -432,16 +460,22 @@ function buildCombinedAnnouncements() {
       existing.mergedFromCount = existing.sourceAnnouncements.length;
       existing.attachment_url = existing.attachment_url || attachmentUrl;
       existing.isin = existing.isin || isin;
+      existing.hasNseListing = existing.hasNseListing || Boolean(nseListing);
 
       if (sortTimestampMs > existing.sortTimestampMs) {
         existing.sortTimestampMs = sortTimestampMs;
         existing.timestamp = timestamp;
-        existing.symbol = symbol;
-        existing.company = company;
+        existing.symbol = displaySymbol;
+        existing.company = displayCompany;
         existing.type = type;
         if (attachmentUrl) {
           existing.attachment_url = attachmentUrl;
         }
+      }
+
+      if (nseListing) {
+        existing.symbol = nseListing.symbol || existing.symbol;
+        existing.company = nseListing.company || existing.company;
       }
 
       crossExchangeMergedCount += 1;
@@ -458,8 +492,9 @@ function buildCombinedAnnouncements() {
       dedupeStrategy: dedupeKey ? "isin+date+(attachment|subject)" : "source-key-fallback",
       isin,
       timestamp: timestamp || "-",
-      symbol: symbol || "-",
-      company: company || "-",
+      symbol: displaySymbol,
+      company: displayCompany,
+      hasNseListing: Boolean(nseListing),
       type: type || "-",
       attachment_url: attachmentUrl,
       sourceAnnouncements: [sourceAnnouncement],
