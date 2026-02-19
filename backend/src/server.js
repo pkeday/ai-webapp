@@ -1643,16 +1643,24 @@ function enrichDedupAnnouncementWithAi(announcement) {
       ai_label: null,
       ai_confidence: null,
       ai_reason: null,
+      ai_error: null,
       ai_status: "MISSING"
     };
   }
 
+  const aiStatus = normalizeText(aiRecord.status).toUpperCase();
+  const isSuccess = aiStatus === "SUCCESS";
+  const isFailed = aiStatus === "FAILED";
+  const successReason = isSuccess ? aiRecord.reason || null : null;
+  const failureReason = isFailed ? aiRecord.error || null : null;
+
   return {
     ...announcement,
-    ai_label: aiRecord.status === "SUCCESS" ? aiRecord.label || null : null,
-    ai_confidence: aiRecord.status === "SUCCESS" ? clampConfidence(aiRecord.confidence) : null,
-    ai_reason: aiRecord.status === "SUCCESS" ? aiRecord.reason || null : null,
-    ai_status: aiRecord.status,
+    ai_label: isSuccess ? aiRecord.label || null : null,
+    ai_confidence: isSuccess ? clampConfidence(aiRecord.confidence) : null,
+    ai_reason: successReason || failureReason,
+    ai_error: failureReason,
+    ai_status: aiStatus || "UNKNOWN",
     ai_provider: aiRecord.provider || null,
     ai_model: aiRecord.model || null
   };
@@ -2673,6 +2681,20 @@ function requireCronSecret(req, res, failureMessage = "Invalid cron secret.") {
 
   sendJson(req, res, 401, { error: failureMessage });
   return false;
+}
+
+function serializeSettledResult(settledResult) {
+  if (!settledResult || typeof settledResult !== "object") {
+    return null;
+  }
+
+  if (settledResult.status === "fulfilled") {
+    return settledResult.value;
+  }
+
+  return {
+    error: settledResult.reason instanceof Error ? settledResult.reason.message : "Unknown error"
+  };
 }
 
 function handleHealth(req, res) {

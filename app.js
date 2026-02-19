@@ -1034,12 +1034,12 @@ function renderNotifications() {
   }
 
   if (state.notifications.loading) {
-    refs.notificationsTable.innerHTML = '<tr><td colspan="7"><div class="empty-state">Loading announcements...</div></td></tr>';
+    refs.notificationsTable.innerHTML = '<tr><td colspan="8"><div class="empty-state">Loading announcements...</div></td></tr>';
     return;
   }
 
   if (state.notifications.error) {
-    refs.notificationsTable.innerHTML = `<tr><td colspan="7"><div class="empty-state">Failed to load announcements: ${escapeHtml(
+    refs.notificationsTable.innerHTML = `<tr><td colspan="8"><div class="empty-state">Failed to load announcements: ${escapeHtml(
       state.notifications.error
     )}</div></td></tr>`;
     return;
@@ -1047,7 +1047,7 @@ function renderNotifications() {
 
   if (state.notifications.items.length === 0) {
     refs.notificationsTable.innerHTML =
-      '<tr><td colspan="7"><div class="empty-state">No announcements found for the selected filter.</div></td></tr>';
+      '<tr><td colspan="8"><div class="empty-state">No announcements found for the selected filter.</div></td></tr>';
     return;
   }
 
@@ -1070,6 +1070,7 @@ function renderNotifications() {
       let type = "-";
       let attachmentUrl = null;
       let aiLabel = "-";
+      let aiNotes = "-";
 
       if (combinedView) {
         const sourceExchanges = Array.isArray(item.exchanges)
@@ -1107,10 +1108,13 @@ function renderNotifications() {
           if (aiStatus === "SUCCESS" && item.ai_label) {
             const confidence = Number(item.ai_confidence);
             aiLabel = Number.isFinite(confidence) ? `${item.ai_label} (${Math.round(confidence * 100)}%)` : String(item.ai_label);
+            aiNotes = item.ai_reason || "-";
           } else if (aiStatus === "FAILED") {
             aiLabel = "Failed";
+            aiNotes = item.ai_error || item.ai_reason || "Unknown AI classification error";
           } else if (aiStatus === "MISSING") {
             aiLabel = "Pending";
+            aiNotes = "Awaiting AI classification";
           }
         }
 
@@ -1138,6 +1142,8 @@ function renderNotifications() {
         ? `<a class="link-btn" href="${escapeAttribute(attachmentUrl)}" target="_blank" rel="noopener">Open</a>`
         : "-";
       const timestampLabel = formatNotificationTimestamp(timestamp);
+      const aiNotesText = String(aiNotes || "-");
+      const aiNotesDisplay = aiNotesText.length > 180 ? `${aiNotesText.slice(0, 177)}...` : aiNotesText;
 
       return `
         <tr>
@@ -1147,6 +1153,7 @@ function renderNotifications() {
           <td>${escapeHtml(company)}</td>
           <td>${escapeHtml(type)}</td>
           <td>${escapeHtml(aiLabel)}</td>
+          <td title="${escapeAttribute(aiNotesText)}">${escapeHtml(aiNotesDisplay)}</td>
           <td>${attachment}</td>
         </tr>
       `;

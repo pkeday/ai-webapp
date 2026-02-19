@@ -536,6 +536,12 @@ input[type="checkbox"] {
   letter-spacing: 0.2px;
 }
 
+#view-notifications .data-table td:nth-child(7) {
+  max-width: 420px;
+  white-space: normal;
+  word-break: break-word;
+}
+
 .settings-stack {
   display: grid;
   gap: 12px;
