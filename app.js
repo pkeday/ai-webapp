@@ -266,8 +266,7 @@ async function init() {
   hydrateCompanySelect();
   bindEvents();
   renderAll();
-  await Promise.all([checkBackendStatus(), refreshAuthState()]);
-  await fetchNotifications();
+  await Promise.allSettled([checkBackendStatus(), refreshAuthState(), fetchNotifications()]);
 }
 
 function bindEvents() {

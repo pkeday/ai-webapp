@@ -1071,6 +1071,10 @@ async function loadStore(exchange) {
       store.lastSyncStats = parsed.lastDedupSyncStats;
     }
 
+    if (typeof parsed?.sourceFingerprint === "string") {
+      store.sourceFingerprint = parsed.sourceFingerprint;
+    }
+
     log(`Loaded ${exchange} announcement store`, {
       count: store.announcements.length,
       path: store.storagePath
@@ -1125,6 +1129,7 @@ async function persistStore(exchange) {
       {
         updatedAt: new Date().toISOString(),
         exchange,
+        sourceFingerprint: typeof store.sourceFingerprint === "string" ? store.sourceFingerprint : null,
         lastSyncAt: store.lastSyncAt,
         lastSyncStats: store.lastSyncStats,
         total: store.announcements.length,
@@ -1463,9 +1468,25 @@ async function handleGetAnnouncements(req, res, requestUrl) {
           : "NSE";
 
   if (selectedExchange === "NSE+BSE") {
-    await refreshCombinedAnnouncements("api-request");
+    if (stores.COMBINED.announcements.length === 0) {
+      await refreshCombinedAnnouncements("api-request");
+    } else {
+      void refreshCombinedAnnouncements("api-request").catch((error) => {
+        log("Background combined refresh failed", {
+          message: error instanceof Error ? error.message : "Unknown combined refresh error"
+        });
+      });
+    }
   } else if (selectedExchange === "DEDUP") {
-    await refreshDedupAnnouncements("api-request");
+    if (stores.DEDUP.announcements.length === 0) {
+      await refreshDedupAnnouncements("api-request");
+    } else {
+      void refreshDedupAnnouncements("api-request").catch((error) => {
+        log("Background dedup refresh failed", {
+          message: error instanceof Error ? error.message : "Unknown dedup refresh error"
+        });
+      });
+    }
   }
 
   const sourceAnnouncements =
@@ -1613,8 +1634,17 @@ async function handleWorkerHeartbeat(req, res) {
 
 async function handleStatus(req, res) {
   await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP")]);
-  await refreshCombinedAnnouncements("status");
-  await refreshDedupAnnouncements("status");
+  // Keep status endpoint responsive; refreshes can run in the background.
+  void refreshCombinedAnnouncements("status").catch((error) => {
+    log("Background combined status refresh failed", {
+      message: error instanceof Error ? error.message : "Unknown combined status refresh error"
+    });
+  });
+  void refreshDedupAnnouncements("status").catch((error) => {
+    log("Background dedup status refresh failed", {
+      message: error instanceof Error ? error.message : "Unknown dedup status refresh error"
+    });
+  });
 
   sendJson(req, res, 200, {
     service: appName,
