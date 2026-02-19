@@ -1204,10 +1204,6 @@ function fallbackSymbolMatch(item, exchange, symbol) {
 }
 
 async function fetchNotifications() {
-  state.notifications.loading = true;
-  state.notifications.error = "";
-  renderNotifications();
-
   const exchangeInput = String(refs.notificationsExchangeSelect?.value ?? "NSE").trim().toUpperCase();
   const exchange = exchangeInput === "BSE" ? "BSE" : "NSE";
   const symbol = (refs.notificationsSymbolInput?.value ?? "").trim().toUpperCase();
@@ -1217,6 +1213,9 @@ async function fetchNotifications() {
   state.notifications.exchange = exchange;
   state.notifications.symbol = symbol;
   state.notifications.limit = limit;
+  state.notifications.loading = true;
+  state.notifications.error = "";
+  renderNotifications();
 
   const params = new URLSearchParams({
     exchange,
