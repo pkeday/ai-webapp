@@ -54,6 +54,9 @@ Production setup in this project:
 - `GEMINI_API_KEY`: Gemini API key for scanned/image-heavy announcements.
 - `AI_GEMINI_STAGE1_MODEL`: Low-cost Gemini stage-1 model (default: `gemini-2.5-flash-lite`).
 - `AI_GEMINI_STAGE2_MODEL`: Escalation Gemini model (default: `gemini-2.5-flash`).
+- `CLAUDE_API_KEY`: Anthropic key (fallback provider for machine-readable text).
+- `AI_ANTHROPIC_STAGE1_MODEL`: Low-cost Anthropic stage-1 model (default: `claude-3-5-haiku-latest`).
+- `AI_ANTHROPIC_STAGE2_MODEL`: Escalation Anthropic model (default: `claude-3-5-sonnet-latest`).
 
 ## API endpoints
 

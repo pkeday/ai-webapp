@@ -54,16 +54,18 @@ const aiEscalationMaxPages = Number.parseInt(process.env.AI_ESCALATION_MAX_PAGES
 const aiEscalationConfidenceThreshold = Number.parseFloat(process.env.AI_ESCALATION_CONFIDENCE_THRESHOLD ?? "0.8");
 const aiMinReadableChars = Number.parseInt(process.env.AI_MIN_READABLE_CHARS ?? "700", 10);
 const aiFailureRetryHours = Number.parseInt(process.env.AI_FAILURE_RETRY_HOURS ?? "24", 10);
-const aiOpenAiApiKeyRaw = process.env.OPENAI_API_KEY ?? "";
-const aiOpenAiApiKey = aiOpenAiApiKeyRaw.includes("*") ? "" : aiOpenAiApiKeyRaw;
+const aiOpenAiApiKey = normalizeApiKeySecret(process.env.OPENAI_API_KEY ?? "");
 const aiOpenAiBaseUrl = process.env.OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "https://api.openai.com/v1";
 const aiOpenAiStage1Model = process.env.AI_OPENAI_STAGE1_MODEL ?? "gpt-5-nano";
 const aiOpenAiStage2Model = process.env.AI_OPENAI_STAGE2_MODEL ?? "gpt-5-mini";
-const aiGeminiApiKeyRaw = process.env.GEMINI_API_KEY ?? "";
-const aiGeminiApiKey = aiGeminiApiKeyRaw.includes("*") ? "" : aiGeminiApiKeyRaw;
+const aiGeminiApiKey = normalizeApiKeySecret(process.env.GEMINI_API_KEY ?? "");
 const aiGeminiBaseUrl = process.env.GEMINI_BASE_URL?.trim().replace(/\/$/, "") || "https://generativelanguage.googleapis.com/v1beta";
 const aiGeminiStage1Model = process.env.AI_GEMINI_STAGE1_MODEL ?? "gemini-2.5-flash-lite";
 const aiGeminiStage2Model = process.env.AI_GEMINI_STAGE2_MODEL ?? "gemini-2.5-flash";
+const aiAnthropicApiKey = normalizeApiKeySecret(process.env.CLAUDE_API_KEY ?? process.env.ANTHROPIC_API_KEY ?? "");
+const aiAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL?.trim().replace(/\/$/, "") || "https://api.anthropic.com/v1";
+const aiAnthropicStage1Model = process.env.AI_ANTHROPIC_STAGE1_MODEL ?? "claude-3-5-haiku-latest";
+const aiAnthropicStage2Model = process.env.AI_ANTHROPIC_STAGE2_MODEL ?? "claude-3-5-sonnet-latest";
 
 const notes = [];
 let noteId = 1;
@@ -313,6 +315,30 @@ function normalizeText(value) {
   return String(value).trim();
 }
 
+function normalizeApiKeySecret(value) {
+  let normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+
+  if (/^bearer\s+/i.test(normalized)) {
+    normalized = normalized.replace(/^bearer\s+/i, "").trim();
+  }
+
+  if (normalized.includes("*")) {
+    return "";
+  }
+
+  return normalized;
+}
+
 function sanitizeSensitiveText(value) {
   const text = normalizeText(value);
   if (!text) {
@@ -321,6 +347,7 @@ function sanitizeSensitiveText(value) {
 
   return text
     .replace(/sk-[A-Za-z0-9_\-]{10,}/g, "[REDACTED_OPENAI_KEY]")
+    .replace(/sk-ant-[A-Za-z0-9_\-]{10,}/g, "[REDACTED_ANTHROPIC_KEY]")
     .replace(/AIza[A-Za-z0-9_\-]{10,}/g, "[REDACTED_GEMINI_KEY]")
     .replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, "Bearer [REDACTED_TOKEN]");
 }
@@ -681,7 +708,11 @@ async function mapWithConcurrency(items, maxConcurrency, mapper) {
 }
 
 function isAiClassificationEnabled() {
-  return aiClassifierEnabled && Boolean(aiOpenAiApiKey || aiGeminiApiKey);
+  return aiClassifierEnabled && hasAiProviderKey();
+}
+
+function hasAiProviderKey() {
+  return Boolean(aiOpenAiApiKey || aiGeminiApiKey || aiAnthropicApiKey);
 }
 
 function normalizeAnnouncementKey(value) {
@@ -1085,6 +1116,53 @@ async function classifyWithOpenAi(model, prompt, apiKey, baseUrl) {
   return normalizeAiModelOutput(parsed);
 }
 
+async function classifyWithAnthropic(model, prompt, apiKey, baseUrl) {
+  const response = await fetch(`${baseUrl}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 450,
+      temperature: 0,
+      system: aiSystemPrompt,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: prompt
+            }
+          ]
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const body = sanitizeSensitiveText(await response.text());
+    throw new Error(`Anthropic HTTP ${response.status}: ${body.slice(0, 300)}`);
+  }
+
+  const payload = await response.json();
+  const outputText = normalizeText(
+    payload?.content
+      ?.map((part) => normalizeText(part?.text))
+      .filter(Boolean)
+      .join(" ")
+  );
+  const parsed = extractFirstJsonObject(outputText);
+  if (!parsed) {
+    throw new Error("Anthropic response did not return JSON");
+  }
+
+  return normalizeAiModelOutput(parsed);
+}
+
 async function classifyWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
   const response = await fetch(`${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
@@ -1164,28 +1242,83 @@ async function classifyDedupAnnouncement(announcement) {
   const inputHash = buildAiInputHash(announcement, criteriaVersion);
 
   const stage1Prompt = buildClassificationUserPrompt(announcement, criteriaVersion, stage1Text.text);
-  let stage1;
-  if (machineReadable && aiOpenAiApiKey) {
-    stage1 = {
-      ...(await classifyWithOpenAi(aiOpenAiStage1Model, stage1Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
-      provider: "openai",
-      model: aiOpenAiStage1Model
-    };
-  } else if (aiGeminiApiKey) {
-    stage1 = {
-      ...(await classifyWithGeminiPdf(aiGeminiStage1Model, stage1Prompt, stage1Pdf.bytes, aiGeminiApiKey, aiGeminiBaseUrl)),
-      provider: "gemini",
-      model: aiGeminiStage1Model
-    };
-  } else if (aiOpenAiApiKey) {
-    stage1 = {
-      ...(await classifyWithOpenAi(aiOpenAiStage1Model, stage1Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
-      provider: "openai",
-      model: aiOpenAiStage1Model
-    };
-  } else {
-    throw new Error("No AI provider key configured");
-  }
+  const stage1Errors = [];
+  const captureProviderError = (provider, error, targetList) => {
+    const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown error"));
+    targetList.push(`${provider}: ${message.slice(0, 220)}`);
+  };
+  const classifyWithStage1Chain = async () => {
+    if (machineReadable) {
+      if (aiOpenAiApiKey) {
+        try {
+          return {
+            ...(await classifyWithOpenAi(aiOpenAiStage1Model, stage1Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
+            provider: "openai",
+            model: aiOpenAiStage1Model
+          };
+        } catch (error) {
+          captureProviderError("openai", error, stage1Errors);
+        }
+      }
+
+      if (aiAnthropicApiKey) {
+        try {
+          return {
+            ...(await classifyWithAnthropic(aiAnthropicStage1Model, stage1Prompt, aiAnthropicApiKey, aiAnthropicBaseUrl)),
+            provider: "anthropic",
+            model: aiAnthropicStage1Model
+          };
+        } catch (error) {
+          captureProviderError("anthropic", error, stage1Errors);
+        }
+      }
+    }
+
+    if (aiGeminiApiKey) {
+      try {
+        return {
+          ...(await classifyWithGeminiPdf(aiGeminiStage1Model, stage1Prompt, stage1Pdf.bytes, aiGeminiApiKey, aiGeminiBaseUrl)),
+          provider: "gemini",
+          model: aiGeminiStage1Model
+        };
+      } catch (error) {
+        captureProviderError("gemini", error, stage1Errors);
+      }
+    }
+
+    if (!machineReadable) {
+      if (aiAnthropicApiKey) {
+        try {
+          return {
+            ...(await classifyWithAnthropic(aiAnthropicStage1Model, stage1Prompt, aiAnthropicApiKey, aiAnthropicBaseUrl)),
+            provider: "anthropic",
+            model: aiAnthropicStage1Model
+          };
+        } catch (error) {
+          captureProviderError("anthropic", error, stage1Errors);
+        }
+      }
+
+      if (aiOpenAiApiKey) {
+        try {
+          return {
+            ...(await classifyWithOpenAi(aiOpenAiStage1Model, stage1Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
+            provider: "openai",
+            model: aiOpenAiStage1Model
+          };
+        } catch (error) {
+          captureProviderError("openai", error, stage1Errors);
+        }
+      }
+    }
+
+    throw new Error(
+      stage1Errors.length > 0
+        ? `Stage 1 classification failed: ${stage1Errors.join(" | ")}`
+        : "No AI provider key configured"
+    );
+  };
+  const stage1 = await classifyWithStage1Chain();
 
   let finalResult = stage1;
   let pagesProcessed = stage1Pdf.pagesProcessed;
@@ -1202,19 +1335,80 @@ async function classifyDedupAnnouncement(announcement) {
       machineReadable ? stage2Text?.text ?? stage1Text.text : stage1Text.text
     );
 
-    if (machineReadable && aiOpenAiApiKey) {
-      finalResult = {
-        ...(await classifyWithOpenAi(aiOpenAiStage2Model, stage2Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
-        provider: "openai",
-        model: aiOpenAiStage2Model
-      };
-    } else if (aiGeminiApiKey) {
-      finalResult = {
-        ...(await classifyWithGeminiPdf(aiGeminiStage2Model, stage2Prompt, stage2Pdf.bytes, aiGeminiApiKey, aiGeminiBaseUrl)),
-        provider: "gemini",
-        model: aiGeminiStage2Model
-      };
-    }
+    const stage2Errors = [];
+    const classifyWithStage2Chain = async () => {
+      if (machineReadable) {
+        if (aiOpenAiApiKey) {
+          try {
+            return {
+              ...(await classifyWithOpenAi(aiOpenAiStage2Model, stage2Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
+              provider: "openai",
+              model: aiOpenAiStage2Model
+            };
+          } catch (error) {
+            captureProviderError("openai", error, stage2Errors);
+          }
+        }
+
+        if (aiAnthropicApiKey) {
+          try {
+            return {
+              ...(await classifyWithAnthropic(aiAnthropicStage2Model, stage2Prompt, aiAnthropicApiKey, aiAnthropicBaseUrl)),
+              provider: "anthropic",
+              model: aiAnthropicStage2Model
+            };
+          } catch (error) {
+            captureProviderError("anthropic", error, stage2Errors);
+          }
+        }
+      }
+
+      if (aiGeminiApiKey) {
+        try {
+          return {
+            ...(await classifyWithGeminiPdf(aiGeminiStage2Model, stage2Prompt, stage2Pdf.bytes, aiGeminiApiKey, aiGeminiBaseUrl)),
+            provider: "gemini",
+            model: aiGeminiStage2Model
+          };
+        } catch (error) {
+          captureProviderError("gemini", error, stage2Errors);
+        }
+      }
+
+      if (!machineReadable) {
+        if (aiAnthropicApiKey) {
+          try {
+            return {
+              ...(await classifyWithAnthropic(aiAnthropicStage2Model, stage2Prompt, aiAnthropicApiKey, aiAnthropicBaseUrl)),
+              provider: "anthropic",
+              model: aiAnthropicStage2Model
+            };
+          } catch (error) {
+            captureProviderError("anthropic", error, stage2Errors);
+          }
+        }
+
+        if (aiOpenAiApiKey) {
+          try {
+            return {
+              ...(await classifyWithOpenAi(aiOpenAiStage2Model, stage2Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
+              provider: "openai",
+              model: aiOpenAiStage2Model
+            };
+          } catch (error) {
+            captureProviderError("openai", error, stage2Errors);
+          }
+        }
+      }
+
+      throw new Error(
+        stage2Errors.length > 0
+          ? `Stage 2 classification failed: ${stage2Errors.join(" | ")}`
+          : "No AI provider key configured for escalation"
+      );
+    };
+
+    finalResult = await classifyWithStage2Chain();
   }
 
   return {
@@ -1256,7 +1450,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     };
   }
 
-  if (!isAiClassificationEnabled()) {
+  if (!hasAiProviderKey()) {
     return {
       trigger,
       skipped: true,
@@ -2810,6 +3004,12 @@ async function handleStatus(req, res) {
     lastDedupSyncStats: stores.DEDUP.lastSyncStats,
     aiCriteriaVersion,
     aiClassifierEnabled,
+    aiProviderKeysConfigured: {
+      openai: Boolean(aiOpenAiApiKey),
+      gemini: Boolean(aiGeminiApiKey),
+      anthropic: Boolean(aiAnthropicApiKey)
+    },
+    aiClassificationRuntimeEnabled: isAiClassificationEnabled(),
     aiLabelsCount: aiLabelStore.records.length,
     aiLabelsSuccessCount: aiSuccessCount,
     aiLabelsFailureCount: aiFailureCount,

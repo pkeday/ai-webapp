@@ -47,10 +47,48 @@ jobs:
           echo "Triggering backend job at ${API_BASE_URL}/api/jobs/daily"
           echo "AI override enabled: ${AI_ENABLED}; AI max items override: ${AI_MAX_ITEMS:-<none>}"
 
-          curl --fail-with-body --show-error --silent \
-            -X POST "${API_BASE_URL}/api/jobs/daily" \
-            -H "Content-Type: application/json" \
-            -H "x-cron-secret: ${CRON_SECRET}" \
-            -d "${PAYLOAD}"
+          RESPONSE_FILE="$(mktemp)"
+          HTTP_CODE="$(
+            curl --show-error --silent \
+              -o "${RESPONSE_FILE}" \
+              -w "%{http_code}" \
+              -X POST "${API_BASE_URL}/api/jobs/daily" \
+              -H "Content-Type: application/json" \
+              -H "x-cron-secret: ${CRON_SECRET}" \
+              -d "${PAYLOAD}"
+          )"
+
+          echo "Backend response code: ${HTTP_CODE}"
+          if jq -e . "${RESPONSE_FILE}" >/dev/null 2>&1; then
+            jq '{
+              ok,
+              runCount,
+              lastCronRunAt,
+              nseSync: (.nseSync | {newCount, fetchedCount, totalStored, syncedAt}),
+              bseSync: (.bseSync | {newCount, fetchedCount, totalStored, syncedAt}),
+              dedupSync: (.dedupSync | {dedupedCount, touchedCount, totalStored, syncedAt, skipped, reason}),
+              aiClassification: (.aiClassification | {
+                skipped,
+                reason,
+                criteriaVersion,
+                forceEnabled,
+                maxItems,
+                candidateCount,
+                queuedCount,
+                processedCount,
+                successCount,
+                failureCount,
+                failedSamples
+              })
+            }' "${RESPONSE_FILE}"
+          else
+            echo "Backend response (non-JSON):"
+            cat "${RESPONSE_FILE}"
+          fi
+
+          if [ "${HTTP_CODE}" -lt 200 ] || [ "${HTTP_CODE}" -ge 300 ]; then
+            echo "Cron trigger failed with HTTP ${HTTP_CODE}"
+            exit 1
+          fi
 
           echo "Cron trigger completed"
