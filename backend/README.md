@@ -27,6 +27,12 @@ Production setup in this project:
 - `NSE_REQUEST_TIMEOUT_MS`: Per-request timeout for NSE calls (default: `30000`).
 - `NSE_MAX_STORED`: Max announcements retained in backend storage (default: `5000`).
 - `NSE_STORAGE_FILE`: Path to local JSON store (default: `data/nse_announcements.json`).
+- `BSE_LOOKBACK_DAYS`: Date lookback window used by each sync run (default: `1`).
+- `BSE_REQUEST_TIMEOUT_MS`: Per-request timeout for BSE calls (default: `30000`).
+- `BSE_MAX_STORED`: Max announcements retained in backend storage (default: `5000`).
+- `BSE_STORAGE_FILE`: Path to local JSON store (default: `data/bse_announcements.json`).
+- `BSE_PAGE_SIZE`: BSE page size for paginated API fetch (default: `100`).
+- `BSE_PAGE_DELAY_MS`: Delay between BSE page fetches in ms (default: `500`).
 
 ## API endpoints
 
@@ -37,10 +43,11 @@ Production setup in this project:
 - `POST /api/notes` body `{ "text": "..." }`
 - `POST /api/jobs/daily` (optional secret in `x-cron-secret`)
 - `POST /api/internal/worker-heartbeat` (optional secret in `x-cron-secret`)
-- `GET /api/notifications/announcements?limit=100&symbol=RIL`
+- `GET /api/notifications/announcements?exchange=NSE|BSE|ALL&limit=100&symbol=TCS`
 
-## NSE notification sync flow
+## Notifications sync flow (NSE + BSE)
 
 - GitHub Actions triggers `POST /api/jobs/daily` on schedule.
-- Server fetches NSE corporate announcements, deduplicates only new records, and stores them in `NSE_STORAGE_FILE`.
+- Server fetches NSE and BSE corporate announcements in the same cron run.
+- New records are deduplicated per exchange and stored in separate files (`NSE_STORAGE_FILE`, `BSE_STORAGE_FILE`).
 - Notifications data is served via `GET /api/notifications/announcements`.

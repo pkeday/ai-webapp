@@ -135,9 +135,16 @@
 
         <section id="view-notifications" class="view">
           <article class="panel">
-            <header>NSE Announcements (Today Pull)</header>
+            <header>Exchange Announcements</header>
             <div class="panel-body">
               <div class="notifications-toolbar">
+                <label>
+                  Exchange
+                  <select id="notifications-exchange-select">
+                    <option value="NSE" selected>NSE</option>
+                    <option value="BSE">BSE</option>
+                  </select>
+                </label>
                 <label>
                   Symbol filter
                   <input id="notifications-symbol-input" type="text" placeholder="Example: TCS" />

@@ -546,7 +546,7 @@ input[type="checkbox"] {
 
 .notifications-toolbar {
   display: grid;
-  grid-template-columns: 1.5fr 1fr auto;
+  grid-template-columns: 1fr 1.5fr 1fr auto;
   gap: 8px;
   margin-bottom: 10px;
 }

@@ -8,7 +8,7 @@
     "start": "node src/server.js",
     "worker": "node src/worker.js",
     "cron": "node src/cron.js",
-    "check": "node --check src/server.js && node --check src/worker.js && node --check src/cron.js && node --check src/nseAnnouncements.js"
+    "check": "node --check src/server.js && node --check src/worker.js && node --check src/cron.js && node --check src/nseAnnouncements.js && node --check src/bseAnnouncements.js"
   },
   "engines": {
     "node": ">=20"

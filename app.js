@@ -157,6 +157,7 @@ const state = {
     items: [],
     total: 0,
     limit: 50,
+    exchange: "NSE",
     symbol: "",
     source: "",
     loading: false,
@@ -211,6 +212,7 @@ const refs = {
   archiveRefreshBtn: document.getElementById("archive-refresh-btn"),
   archiveSummary: document.getElementById("archive-summary"),
   archiveTable: document.getElementById("archive-table"),
+  notificationsExchangeSelect: document.getElementById("notifications-exchange-select"),
   notificationsSymbolInput: document.getElementById("notifications-symbol-input"),
   notificationsLimitSelect: document.getElementById("notifications-limit-select"),
   notificationsRefreshBtn: document.getElementById("notifications-refresh-btn"),
@@ -348,6 +350,10 @@ function bindEvents() {
   });
 
   refs.notificationsRefreshBtn.addEventListener("click", async () => {
+    await fetchNotifications();
+  });
+
+  refs.notificationsExchangeSelect.addEventListener("change", async () => {
     await fetchNotifications();
   });
 
@@ -841,12 +847,17 @@ function renderNotifications() {
     return;
   }
 
+  if (refs.notificationsExchangeSelect) {
+    refs.notificationsExchangeSelect.value = state.notifications.exchange;
+  }
+
   const stats = state.notifications.lastSyncStats;
   const syncedLabel = state.notifications.lastSyncAt
     ? new Date(state.notifications.lastSyncAt).toLocaleString()
     : "not synced yet";
 
   const details = [
+    `exchange: ${state.notifications.exchange}`,
     `${state.notifications.total} total announcements`,
     `showing ${state.notifications.items.length}`,
     `last sync: ${syncedLabel}`
@@ -882,16 +893,23 @@ function renderNotifications() {
 
   refs.notificationsTable.innerHTML = state.notifications.items
     .map((item) => {
-      const attachment = item.attchmntfile
-        ? `<a class="link-btn" href="${escapeAttribute(item.attchmntfile)}" target="_blank" rel="noopener">Open</a>`
+      const exchange = String(item.exchange ?? state.notifications.exchange ?? "NSE").toUpperCase();
+      const timestamp = exchange === "BSE" ? item.datetime || item.news_date || "-" : item.an_dt || item.exchdisstime || "-";
+      const symbol = exchange === "BSE" ? item.scrip_code || "-" : item.symbol || "-";
+      const company = exchange === "BSE" ? item.company_name || "-" : item.sm_name || "-";
+      const type = exchange === "BSE" ? item.category || item.subcategory || item.subject || "-" : item.desc || "-";
+      const attachmentUrl =
+        exchange === "BSE" ? item.attachment_url || item.attachment_url_fallback || null : item.attchmntfile || null;
+      const attachment = attachmentUrl
+        ? `<a class="link-btn" href="${escapeAttribute(attachmentUrl)}" target="_blank" rel="noopener">Open</a>`
         : "-";
 
       return `
         <tr>
-          <td>${escapeHtml(item.an_dt || item.exchdisstime || "-")}</td>
-          <td>${escapeHtml(item.symbol || "-")}</td>
-          <td>${escapeHtml(item.sm_name || "-")}</td>
-          <td>${escapeHtml(item.desc || "-")}</td>
+          <td>${escapeHtml(timestamp)}</td>
+          <td>${escapeHtml(symbol)}</td>
+          <td>${escapeHtml(company)}</td>
+          <td>${escapeHtml(type)}</td>
           <td>${attachment}</td>
         </tr>
       `;
@@ -1139,19 +1157,69 @@ async function fetchArchives() {
   }
 }
 
+function extractExchangeSync(payload, exchange) {
+  const fallbackAtKey = exchange === "BSE" ? "lastBseSyncAt" : "lastNseSyncAt";
+  const fallbackStatsKey = exchange === "BSE" ? "lastBseSyncStats" : "lastNseSyncStats";
+  let syncAt = null;
+  let syncStats = null;
+
+  if (typeof payload?.lastSyncAt === "string") {
+    syncAt = payload.lastSyncAt;
+  } else if (payload?.lastSyncAt && typeof payload.lastSyncAt === "object" && typeof payload.lastSyncAt[exchange] === "string") {
+    syncAt = payload.lastSyncAt[exchange];
+  } else if (typeof payload?.[fallbackAtKey] === "string") {
+    syncAt = payload[fallbackAtKey];
+  }
+
+  if (payload?.lastSyncStats && typeof payload.lastSyncStats === "object" && !Array.isArray(payload.lastSyncStats)) {
+    if (payload.lastSyncStats.exchange === exchange) {
+      syncStats = payload.lastSyncStats;
+    } else if (payload.lastSyncStats[exchange] && typeof payload.lastSyncStats[exchange] === "object") {
+      syncStats = payload.lastSyncStats[exchange];
+    }
+  }
+
+  if (!syncStats && payload?.[fallbackStatsKey] && typeof payload[fallbackStatsKey] === "object") {
+    syncStats = payload[fallbackStatsKey];
+  }
+
+  return { syncAt, syncStats };
+}
+
+function fallbackSymbolMatch(item, exchange, symbol) {
+  if (!symbol) {
+    return true;
+  }
+
+  const query = symbol.toUpperCase();
+  if (exchange === "BSE") {
+    const scripCode = String(item?.scrip_code ?? "").toUpperCase();
+    const companyName = String(item?.company_name ?? "").toUpperCase();
+    return scripCode === query || companyName.includes(query);
+  }
+
+  const nseSymbol = String(item?.symbol ?? "").toUpperCase();
+  const companyName = String(item?.sm_name ?? "").toUpperCase();
+  return nseSymbol === query || companyName.includes(query);
+}
+
 async function fetchNotifications() {
   state.notifications.loading = true;
   state.notifications.error = "";
   renderNotifications();
 
+  const exchangeInput = String(refs.notificationsExchangeSelect?.value ?? "NSE").trim().toUpperCase();
+  const exchange = exchangeInput === "BSE" ? "BSE" : "NSE";
   const symbol = (refs.notificationsSymbolInput?.value ?? "").trim().toUpperCase();
   const limitInput = Number.parseInt(refs.notificationsLimitSelect?.value ?? "50", 10);
   const limit = Number.isFinite(limitInput) ? Math.max(1, Math.min(500, limitInput)) : 50;
 
+  state.notifications.exchange = exchange;
   state.notifications.symbol = symbol;
   state.notifications.limit = limit;
 
   const params = new URLSearchParams({
+    exchange,
     limit: String(limit)
   });
 
@@ -1167,38 +1235,41 @@ async function fetchNotifications() {
   try {
     const payload = await apiFetch(`/api/notifications/announcements?${params.toString()}`);
     const items = Array.isArray(payload?.announcements) ? payload.announcements : [];
+    const { syncAt, syncStats } = extractExchangeSync(payload, exchange);
+
     apiResult = {
       items,
       total: Number(payload?.total ?? items.length),
-      lastSyncAt: typeof payload?.lastNseSyncAt === "string" ? payload.lastNseSyncAt : null,
-      lastSyncStats: payload?.lastNseSyncStats && typeof payload.lastNseSyncStats === "object" ? payload.lastNseSyncStats : null,
-      source: "backend API"
+      lastSyncAt: syncAt,
+      lastSyncStats: syncStats,
+      source: `backend API (${exchange})`
     };
   } catch (error) {
     apiError = error instanceof Error ? error.message : "Unknown API error";
   }
 
   try {
-    const fallbackResponse = await fetch("./backend/data/nse_announcements.json", { cache: "no-store" });
+    const fallbackFile = exchange === "BSE" ? "./backend/data/bse_announcements.json" : "./backend/data/nse_announcements.json";
+    const fallbackResponse = await fetch(fallbackFile, { cache: "no-store" });
     if (!fallbackResponse.ok) {
       throw new Error(`Fallback file not found (${fallbackResponse.status})`);
     }
 
     const fallbackPayload = await fallbackResponse.json();
     const allItems = Array.isArray(fallbackPayload?.announcements) ? fallbackPayload.announcements : [];
-    const filteredItems = symbol
-      ? allItems.filter((item) => String(item.symbol ?? "").toUpperCase() === symbol)
-      : allItems;
+    const filteredItems = allItems.filter((item) => fallbackSymbolMatch(item, exchange, symbol));
+    const normalizedItems = filteredItems.map((item) => ({
+      ...item,
+      exchange: item.exchange || exchange
+    }));
+    const { syncAt, syncStats } = extractExchangeSync(fallbackPayload, exchange);
 
     fallbackResult = {
-      items: filteredItems.slice(0, limit),
-      total: filteredItems.length,
-      lastSyncAt: typeof fallbackPayload?.lastNseSyncAt === "string" ? fallbackPayload.lastNseSyncAt : null,
-      lastSyncStats:
-        fallbackPayload?.lastNseSyncStats && typeof fallbackPayload.lastNseSyncStats === "object"
-          ? fallbackPayload.lastNseSyncStats
-          : null,
-      source: "bundled snapshot"
+      items: normalizedItems.slice(0, limit),
+      total: normalizedItems.length,
+      lastSyncAt: syncAt,
+      lastSyncStats: syncStats,
+      source: `bundled ${exchange} snapshot`
     };
   } catch (error) {
     fallbackError = error instanceof Error ? error.message : "Unknown fallback error";
