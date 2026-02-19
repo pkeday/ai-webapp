@@ -1,5 +1,6 @@
 const STORAGE_KEYS = {
   apiBase: "ai_webapp_api_base",
+  authToken: "brokerage_auth_token",
   priority: "brokerage_priority_companies",
   ignored: "brokerage_ignored_companies",
   recipients: "brokerage_digest_recipients",
@@ -7,7 +8,7 @@ const STORAGE_KEYS = {
   dictionary: "brokerage_company_dictionary"
 };
 
-const defaultApiBase = "https://pkeday-ai-webapp-api.onrender.com";
+const defaultApiBase = "https://pkeday-ai-webapp-brokerage-api.onrender.com";
 
 const defaultDictionary = [
   {
@@ -37,7 +38,7 @@ const defaultDictionary = [
   }
 ];
 
-const rawReports = [
+const seedReports = [
   {
     id: "ax-ril-results-1902",
     broker: "Axis Capital",
@@ -77,8 +78,7 @@ const rawReports = [
     type: "General Update",
     coverage: "Roundup",
     time: "2026-02-19T11:25:00+05:30",
-    summary:
-      "Latest releases section repeats prior Reliance result takeaways from morning note.",
+    summary: "Latest releases section repeats prior Reliance result takeaways from morning note.",
     sentiment: "neutral",
     duplicateOf: "ax-ril-results-1902",
     links: {
@@ -134,61 +134,35 @@ const rawReports = [
       pdf: "#",
       gmail: "#"
     }
-  },
-  {
-    id: "jeff-sector-pack-1902",
-    broker: "Jefferies India",
-    company: "Reliance",
-    type: "Sector Update",
-    coverage: "Sector Packet",
-    time: "2026-02-19T10:20:00+05:30",
-    summary:
-      "Weekly packet carries a compact Reliance mention that repeats prior-day framing and is not treated as a new canonical event.",
-    sentiment: "neutral",
-    duplicateOf: "kotak-ril-init-1902",
-    links: {
-      archive: "#",
-      pdf: "#",
-      gmail: "#"
-    }
-  },
-  {
-    id: "jeff-adani-update-1902",
-    broker: "Jefferies India",
-    company: "Adani Ports",
-    type: "General Update",
-    coverage: "Logistics",
-    time: "2026-02-19T09:50:00+05:30",
-    summary:
-      "Container throughput view revised modestly higher, but valuation premium remains difficult to defend against execution volatility in adjacent assets.",
-    sentiment: "neutral",
-    links: {
-      archive: "#",
-      pdf: "#",
-      gmail: "#"
-    }
-  },
-  {
-    id: "ax-vi-quick-1902",
-    broker: "Axis Capital",
-    company: "Voda Idea",
-    type: "General Update",
-    coverage: "Telecom",
-    time: "2026-02-19T08:10:00+05:30",
-    summary:
-      "Tariff commentary remains speculative and unsupported by immediate balance sheet flexibility. Monitoring only.",
-    sentiment: "bearish",
-    links: {
-      archive: "#",
-      pdf: "#",
-      gmail: "#"
-    }
   }
 ];
 
 const state = {
   view: "dashboard",
   apiBase: loadString(STORAGE_KEYS.apiBase, defaultApiBase),
+  auth: {
+    token: loadString(STORAGE_KEYS.authToken, ""),
+    user: null,
+    gmailConnected: false,
+    loading: false
+  },
+  archives: {
+    items: [],
+    brokerFilter: "All",
+    search: "",
+    fetchedAt: null,
+    total: 0
+  },
+  notifications: {
+    items: [],
+    total: 0,
+    limit: 50,
+    symbol: "",
+    loading: false,
+    error: "",
+    lastSyncAt: null,
+    lastSyncStats: null
+  },
   priorityCompanies: loadList(STORAGE_KEYS.priority, ["Reliance Industries", "UltraTech Cement", "ICICI Bank"]),
   ignoredCompanies: loadList(STORAGE_KEYS.ignored, ["Adani Ports", "Vodafone Idea"]),
   digestRecipients: loadList(STORAGE_KEYS.recipients, ["pkeday@gmail.com"]),
@@ -209,14 +183,21 @@ const state = {
 
 const refs = {
   backendStatus: document.getElementById("backend-status"),
+  authStatus: document.getElementById("auth-status"),
   pipelineStatus: document.getElementById("pipeline-status"),
   tabButtons: Array.from(document.querySelectorAll(".tab")),
   views: {
     dashboard: document.getElementById("view-dashboard"),
+    archive: document.getElementById("view-archive"),
     company: document.getElementById("view-company"),
+    notifications: document.getElementById("view-notifications"),
     settings: document.getElementById("view-settings"),
     digest: document.getElementById("view-digest")
   },
+  googleConnectBtn: document.getElementById("google-connect-btn"),
+  signoutBtn: document.getElementById("signout-btn"),
+  runIngestBtn: document.getElementById("run-ingest-btn"),
+  sendDigestBtn: document.getElementById("send-digest-btn"),
   filterBroker: document.getElementById("filter-broker"),
   filterType: document.getElementById("filter-type"),
   filterSearch: document.getElementById("filter-search"),
@@ -224,6 +205,16 @@ const refs = {
   chipRow: document.getElementById("control-chip-row"),
   kpiGrid: document.getElementById("kpi-grid"),
   brokerLanes: document.getElementById("broker-lanes"),
+  archiveBrokerFilter: document.getElementById("archive-broker-filter"),
+  archiveSearch: document.getElementById("archive-search"),
+  archiveRefreshBtn: document.getElementById("archive-refresh-btn"),
+  archiveSummary: document.getElementById("archive-summary"),
+  archiveTable: document.getElementById("archive-table"),
+  notificationsSymbolInput: document.getElementById("notifications-symbol-input"),
+  notificationsLimitSelect: document.getElementById("notifications-limit-select"),
+  notificationsRefreshBtn: document.getElementById("notifications-refresh-btn"),
+  notificationsMeta: document.getElementById("notifications-meta"),
+  notificationsTable: document.getElementById("notifications-table"),
   companySelect: document.getElementById("company-select"),
   companySort: document.getElementById("company-sort"),
   companyTimeline: document.getElementById("company-timeline"),
@@ -244,32 +235,81 @@ const refs = {
   ignoreInput: document.getElementById("ignore-input"),
   recipientForm: document.getElementById("recipient-form"),
   recipientInput: document.getElementById("recipient-input"),
-  scheduleSaveBtn: document.getElementById("schedule-save-btn"),
-  sendDigestBtn: document.getElementById("send-digest-btn"),
-  runIngestBtn: document.getElementById("run-ingest-btn"),
-  googleConnectBtn: document.getElementById("google-connect-btn")
+  scheduleSaveBtn: document.getElementById("schedule-save-btn")
 };
 
 init();
 
-function init() {
+async function init() {
+  handleAuthCallbackFromHash();
   hydrateBrokerFilter();
   hydrateCompanySelect();
   bindEvents();
   renderAll();
-  checkBackendStatus();
+  await Promise.all([checkBackendStatus(), refreshAuthState()]);
+  await fetchNotifications();
 }
 
 function bindEvents() {
   for (const button of refs.tabButtons) {
     button.addEventListener("click", () => {
       const view = button.dataset.view;
-      if (view) {
-        state.view = view;
-        renderViewState();
+      if (!view) {
+        return;
+      }
+      state.view = view;
+      renderViewState();
+
+      if (view === "notifications" && state.notifications.items.length === 0 && !state.notifications.loading) {
+        void fetchNotifications();
       }
     });
   }
+
+  refs.googleConnectBtn.addEventListener("click", async () => {
+    await startGoogleAuth();
+  });
+
+  refs.signoutBtn.addEventListener("click", async () => {
+    await signOut();
+  });
+
+  refs.runIngestBtn.addEventListener("click", async () => {
+    if (!state.auth.token) {
+      setPipelineMessage("Sign in with Google before running ingest.");
+      return;
+    }
+
+    refs.runIngestBtn.disabled = true;
+    setPipelineMessage("Running Gmail ingest...");
+
+    try {
+      const response = await apiFetch("/api/gmail/ingest", {
+        method: "POST",
+        body: JSON.stringify({
+          maxResults: 30,
+          includeAttachments: true
+        })
+      });
+
+      const summary = response.summary;
+      setPipelineMessage(
+        `Ingest complete: archived ${summary.archivedCount}, skipped ${summary.skippedCount}, attachments ${summary.attachmentCount}.`
+      );
+      await fetchArchives();
+      renderAllDataViews();
+    } catch (error) {
+      setPipelineMessage(`Ingest failed: ${error.message}`);
+    } finally {
+      refs.runIngestBtn.disabled = false;
+    }
+  });
+
+  refs.sendDigestBtn.addEventListener("click", () => {
+    state.view = "digest";
+    renderViewState();
+    setPipelineMessage("Digest preview is ready. Email sending pipeline is next.");
+  });
 
   refs.filterBroker.addEventListener("change", (event) => {
     state.filters.broker = event.target.value;
@@ -289,6 +329,70 @@ function bindEvents() {
   refs.filterDuplicates.addEventListener("change", (event) => {
     state.filters.includeDuplicates = event.target.checked;
     renderDashboard();
+  });
+
+  refs.archiveBrokerFilter.addEventListener("change", (event) => {
+    state.archives.brokerFilter = event.target.value;
+    renderArchiveView();
+  });
+
+  refs.archiveSearch.addEventListener("input", (event) => {
+    state.archives.search = event.target.value.trim().toLowerCase();
+    renderArchiveView();
+  });
+
+  refs.archiveRefreshBtn.addEventListener("click", async () => {
+    await fetchArchives();
+    renderArchiveView();
+  });
+
+  refs.notificationsRefreshBtn.addEventListener("click", async () => {
+    await fetchNotifications();
+  });
+
+  refs.notificationsLimitSelect.addEventListener("change", async () => {
+    await fetchNotifications();
+  });
+
+  refs.notificationsSymbolInput.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+    await fetchNotifications();
+  });
+
+  refs.archiveTable.addEventListener("click", async (event) => {
+    const shareButton = event.target.closest("button[data-share-archive]");
+    if (!shareButton) {
+      return;
+    }
+
+    const archiveId = shareButton.dataset.shareArchive;
+    if (!archiveId) {
+      return;
+    }
+
+    shareButton.disabled = true;
+    try {
+      const response = await apiFetch(`/api/email-archives/${archiveId}/share-links`, {
+        method: "POST",
+        body: JSON.stringify({ expiresHours: 24 })
+      });
+
+      const link = response.raw?.url;
+      if (link) {
+        await copyToClipboard(link);
+        setPipelineMessage(`Share link copied for archive ${archiveId}.`);
+      } else {
+        setPipelineMessage(`Share link generated for archive ${archiveId}.`);
+      }
+    } catch (error) {
+      setPipelineMessage(`Failed to create share link: ${error.message}`);
+    } finally {
+      shareButton.disabled = false;
+    }
   });
 
   refs.companySelect.addEventListener("change", (event) => {
@@ -340,6 +444,7 @@ function bindEvents() {
     if (!email || state.digestRecipients.includes(email)) {
       return;
     }
+
     state.digestRecipients.push(email);
     persistList(STORAGE_KEYS.recipients, state.digestRecipients);
     renderSettings();
@@ -353,30 +458,15 @@ function bindEvents() {
     setPipelineMessage("Digest schedule saved.");
   });
 
-  refs.sendDigestBtn.addEventListener("click", () => {
-    state.view = "digest";
-    renderViewState();
-    setPipelineMessage("Digest preview is ready. Backend mail sending is the next step.");
-  });
-
-  refs.runIngestBtn.addEventListener("click", () => {
-    setPipelineMessage("Ingest trigger UI is ready. Gmail pipeline will be connected in backend phase.");
-  });
-
-  refs.googleConnectBtn.addEventListener("click", () => {
-    setPipelineMessage("Google OAuth screen will be wired in the next backend/auth phase.");
-  });
-
   refs.priorityList.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-company]");
     if (!button) {
       return;
     }
+
     state.priorityCompanies = state.priorityCompanies.filter((value) => value !== button.dataset.company);
     persistList(STORAGE_KEYS.priority, state.priorityCompanies);
-    renderDashboard();
-    renderSettings();
-    renderDigest();
+    renderAllDataViews();
   });
 
   refs.ignoreList.addEventListener("click", (event) => {
@@ -384,12 +474,10 @@ function bindEvents() {
     if (!button) {
       return;
     }
+
     state.ignoredCompanies = state.ignoredCompanies.filter((value) => value !== button.dataset.company);
     persistList(STORAGE_KEYS.ignored, state.ignoredCompanies);
-    renderDashboard();
-    renderSettings();
-    renderCompanyView();
-    renderDigest();
+    renderAllDataViews();
   });
 
   refs.recipientList.addEventListener("click", (event) => {
@@ -397,6 +485,7 @@ function bindEvents() {
     if (!button) {
       return;
     }
+
     state.digestRecipients = state.digestRecipients.filter((value) => value !== button.dataset.recipient);
     persistList(STORAGE_KEYS.recipients, state.digestRecipients);
     renderSettings();
@@ -406,11 +495,17 @@ function bindEvents() {
 
 function renderAll() {
   renderViewState();
+  renderAuthUi();
+  renderAllDataViews();
+}
+
+function renderAllDataViews() {
   renderDashboard();
+  renderArchiveView();
   renderCompanyView();
+  renderNotifications();
   renderSettings();
   renderDigest();
-  refs.scheduleInput.value = state.digestSchedule;
 }
 
 function renderViewState() {
@@ -421,6 +516,24 @@ function renderViewState() {
   for (const button of refs.tabButtons) {
     button.classList.toggle("active", button.dataset.view === state.view);
   }
+}
+
+function renderAuthUi() {
+  const signedIn = Boolean(state.auth.token && state.auth.user);
+
+  if (!signedIn) {
+    refs.authStatus.textContent = "Auth status: not signed in";
+    refs.googleConnectBtn.textContent = "Sign in with Google";
+    refs.signoutBtn.classList.add("hidden");
+    refs.runIngestBtn.disabled = true;
+    return;
+  }
+
+  const gmailPart = state.auth.gmailConnected ? "Gmail connected" : "Gmail not connected";
+  refs.authStatus.textContent = `Auth status: ${state.auth.user.email} (${gmailPart})`;
+  refs.googleConnectBtn.textContent = state.auth.gmailConnected ? "Reconnect Google" : "Connect Gmail";
+  refs.signoutBtn.classList.remove("hidden");
+  refs.runIngestBtn.disabled = false;
 }
 
 function renderDashboard() {
@@ -469,12 +582,12 @@ function renderDashboard() {
     <article class="kpi">
       <h4>Raw Reports</h4>
       <p>${allReports.length}</p>
-      <small>input emails and packet snippets</small>
+      <small>seed + ingested archive</small>
     </article>
     <article class="kpi">
       <h4>Canonical Reports</h4>
       <p>${canonicalReports.length}</p>
-      <small>dedupe primary events only</small>
+      <small>dedupe primary events</small>
     </article>
     <article class="kpi">
       <h4>Collapsed Duplicates</h4>
@@ -484,7 +597,7 @@ function renderDashboard() {
     <article class="kpi">
       <h4>Priority Hits</h4>
       <p>${priorityHitCount}</p>
-      <small>used first in digest ordering</small>
+      <small>ranked first in digest</small>
     </article>
   `;
 
@@ -527,12 +640,67 @@ function renderReportCard(report) {
       </div>
       <p class="summary">${escapeHtml(report.summary)}</p>
       <div class="card-actions">
-        <a class="link-btn" href="${escapeAttribute(report.links.archive)}">Open archived .eml</a>
-        <a class="link-btn" href="${escapeAttribute(report.links.pdf)}">Open attachment PDF</a>
-        <a class="link-btn" href="${escapeAttribute(report.links.gmail)}">Open Gmail thread</a>
+        <a class="link-btn" href="${escapeAttribute(report.links.archive)}" target="_blank" rel="noopener">Open archived .eml</a>
+        <a class="link-btn" href="${escapeAttribute(report.links.pdf)}" target="_blank" rel="noopener">Open attachment PDF</a>
+        <a class="link-btn" href="${escapeAttribute(report.links.gmail)}" target="_blank" rel="noopener">Open Gmail thread</a>
       </div>
     </article>
   `;
+}
+
+function renderArchiveView() {
+  const records = getVisibleArchives();
+
+  const brokers = Array.from(new Set(state.archives.items.map((item) => item.broker))).sort();
+  refs.archiveBrokerFilter.innerHTML = [
+    `<option value="All">All</option>`,
+    ...brokers.map((broker) => `<option value="${escapeAttribute(broker)}">${escapeHtml(broker)}</option>`)
+  ].join("");
+  refs.archiveBrokerFilter.value = state.archives.brokerFilter;
+
+  const fetchedText = state.archives.fetchedAt ? new Date(state.archives.fetchedAt).toLocaleString() : "not fetched yet";
+  refs.archiveSummary.innerHTML = `<strong>${records.length}</strong> visible archives (${state.archives.total} total loaded). Last fetch: ${escapeHtml(fetchedText)}.`;
+
+  if (records.length === 0) {
+    refs.archiveTable.innerHTML =
+      '<tr><td colspan="5"><div class="empty-state">No archived emails yet. Sign in and run ingest to populate this table.</div></td></tr>';
+    return;
+  }
+
+  refs.archiveTable.innerHTML = records
+    .map((item) => {
+      const attachments = item.attachments
+        .slice(0, 2)
+        .map(
+          (attachment) =>
+            `<a class="link-btn" href="${escapeAttribute(toApiAbsolute(attachment.downloadUrl))}" target="_blank" rel="noopener">${escapeHtml(
+              attachment.filename
+            )}</a>`
+        )
+        .join("");
+
+      return `
+        <tr>
+          <td>${escapeHtml(formatShortDate(item.ingestedAt))}</td>
+          <td>${escapeHtml(item.broker)}</td>
+          <td>${escapeHtml(item.from)}</td>
+          <td>
+            <strong>${escapeHtml(item.subject)}</strong>
+            <br />
+            <small>${escapeHtml(item.snippet || item.bodyPreview || "")}</small>
+          </td>
+          <td>
+            <div class="archive-links">
+              <a class="link-btn" href="${escapeAttribute(toApiAbsolute(item.downloadUrl))}" target="_blank" rel="noopener">Open .eml</a>
+              ${attachments}
+              <a class="link-btn" href="${escapeAttribute(item.gmailMessageUrl || "#")}" target="_blank" rel="noopener">Gmail</a>
+              <button class="btn" data-share-archive="${escapeAttribute(item.id)}" type="button">Share link</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
 }
 
 function renderCompanyView() {
@@ -540,15 +708,13 @@ function renderCompanyView() {
     (report) => report.canonicalCompany === state.companyView.selected && !state.ignoredCompanies.includes(report.canonicalCompany)
   );
 
-  let sorted = reports;
-  if (state.companyView.sort === "latest") {
-    sorted = [...reports].sort((a, b) => b.timestamp - a.timestamp);
-  } else {
-    sorted = [...reports].sort((a, b) => a.broker.localeCompare(b.broker));
-  }
+  const sorted =
+    state.companyView.sort === "broker"
+      ? [...reports].sort((a, b) => a.broker.localeCompare(b.broker))
+      : [...reports].sort((a, b) => b.timestamp - a.timestamp);
 
   if (sorted.length === 0) {
-    refs.companyTimeline.innerHTML = `<div class="empty-state">No visible reports for this company after filters.</div>`;
+    refs.companyTimeline.innerHTML = `<div class="empty-state">No visible reports for this company.</div>`;
   } else {
     refs.companyTimeline.innerHTML = sorted
       .map(
@@ -561,8 +727,8 @@ function renderCompanyView() {
             </div>
             <p class="summary">${escapeHtml(report.summary)}</p>
             <div class="card-actions">
-              <a class="link-btn" href="${escapeAttribute(report.links.archive)}">Open archived .eml</a>
-              <a class="link-btn" href="${escapeAttribute(report.links.pdf)}">Open PDF</a>
+              <a class="link-btn" href="${escapeAttribute(report.links.archive)}" target="_blank" rel="noopener">Open archived .eml</a>
+              <a class="link-btn" href="${escapeAttribute(report.links.pdf)}" target="_blank" rel="noopener">Open PDF</a>
             </div>
           </article>
         `
@@ -580,11 +746,11 @@ function renderCompanyView() {
 
   refs.companyWorkbench.innerHTML = `
     <div class="workbench-list">
-      <div class="note good"><strong>Signal map:</strong> ${sentiment.bullish} bullish, ${sentiment.neutral} neutral, ${sentiment.bearish} bearish (canonical only).</div>
+      <div class="note good"><strong>Signal map:</strong> ${sentiment.bullish} bullish, ${sentiment.neutral} neutral, ${sentiment.bearish} bearish.</div>
       <div class="note"><strong>Canonical references:</strong> ${canonical.length}<br /><strong>Collapsed duplicates:</strong> ${duplicates.length}</div>
       <div class="note"><strong>Priority status:</strong> ${state.priorityCompanies.includes(state.companyView.selected) ? "In priority list" : "Not in priority list"}</div>
-      <div class="note warn"><strong>Broker separation:</strong> all summaries stay broker-native. No merged thesis text across houses.</div>
-      <div class="note"><strong>Source access model:</strong> archived .eml and PDFs can be shared without Gmail login access.</div>
+      <div class="note warn"><strong>Broker separation:</strong> summaries remain broker-native and are not merged.</div>
+      <div class="note"><strong>Source access:</strong> archived .eml and attachment links are shareable with signed URLs.</div>
     </div>
   `;
 }
@@ -615,10 +781,10 @@ function renderDigest() {
     .filter((report) => !state.ignoredCompanies.includes(report.canonicalCompany));
 
   const priorityOrder = state.priorityCompanies
-    .map((company) => {
-      const count = reports.filter((report) => report.canonicalCompany === company).length;
-      return { company, count };
-    })
+    .map((company) => ({
+      company,
+      count: reports.filter((report) => report.canonicalCompany === company).length
+    }))
     .filter((entry) => entry.count > 0);
 
   const byBroker = groupBy(reports, "broker");
@@ -662,11 +828,70 @@ function renderDigest() {
 
     <div class="digest-block">
       <h3>Dedupe Audit</h3>
-      <p>${duplicateCount} duplicate snippets are suppressed from the canonical digest construction.</p>
+      <p>${duplicateCount} duplicate snippets are suppressed from canonical digest generation.</p>
     </div>
 
     ${state.pipelineMessage ? `<div class="message-toast">${escapeHtml(state.pipelineMessage)}</div>` : ""}
   `;
+}
+
+function renderNotifications() {
+  if (!refs.notificationsTable || !refs.notificationsMeta) {
+    return;
+  }
+
+  const stats = state.notifications.lastSyncStats;
+  const syncedLabel = state.notifications.lastSyncAt
+    ? new Date(state.notifications.lastSyncAt).toLocaleString()
+    : "not synced yet";
+
+  const details = [
+    `${state.notifications.total} total announcements`,
+    `showing ${state.notifications.items.length}`,
+    `last sync: ${syncedLabel}`
+  ];
+
+  if (stats?.fromDate && stats?.toDate) {
+    details.push(`range: ${stats.fromDate} to ${stats.toDate}`);
+  }
+
+  refs.notificationsMeta.textContent = details.join(" | ");
+
+  if (state.notifications.loading) {
+    refs.notificationsTable.innerHTML = '<tr><td colspan="5"><div class="empty-state">Loading announcements...</div></td></tr>';
+    return;
+  }
+
+  if (state.notifications.error) {
+    refs.notificationsTable.innerHTML = `<tr><td colspan="5"><div class="empty-state">Failed to load announcements: ${escapeHtml(
+      state.notifications.error
+    )}</div></td></tr>`;
+    return;
+  }
+
+  if (state.notifications.items.length === 0) {
+    refs.notificationsTable.innerHTML =
+      '<tr><td colspan="5"><div class="empty-state">No announcements found for the selected filter.</div></td></tr>';
+    return;
+  }
+
+  refs.notificationsTable.innerHTML = state.notifications.items
+    .map((item) => {
+      const attachment = item.attchmntfile
+        ? `<a class="link-btn" href="${escapeAttribute(item.attchmntfile)}" target="_blank" rel="noopener">Open</a>`
+        : "-";
+
+      return `
+        <tr>
+          <td>${escapeHtml(item.an_dt || item.exchdisstime || "-")}</td>
+          <td>${escapeHtml(item.symbol || "-")}</td>
+          <td>${escapeHtml(item.sm_name || "-")}</td>
+          <td>${escapeHtml(item.desc || "-")}</td>
+          <td>${attachment}</td>
+        </tr>
+      `;
+    })
+    .join("");
 }
 
 function hydrateBrokerFilter() {
@@ -686,41 +911,94 @@ function hydrateCompanySelect() {
 }
 
 function buildReports() {
-  const aliasLookup = new Map();
+  const dictionaryMap = new Map();
   for (const entry of state.dictionary) {
-    aliasLookup.set(normalizeKey(entry.canonical), entry.canonical);
+    dictionaryMap.set(normalizeKey(entry.canonical), entry.canonical);
     for (const alias of entry.aliases) {
-      aliasLookup.set(normalizeKey(alias), entry.canonical);
+      dictionaryMap.set(normalizeKey(alias), entry.canonical);
     }
   }
 
-  return rawReports.map((report) => {
-    const normalized = aliasLookup.get(normalizeKey(report.company)) ?? report.company;
+  const normalizedSeed = seedReports.map((report) => normalizeReport(report, dictionaryMap));
+  const normalizedArchive = state.archives.items.map((archive) => {
+    const companyGuess = guessCompanyFromSubject(archive.subject);
+    const reportType = classifyReportType(archive.subject, archive.bodyPreview || archive.snippet || "");
 
-    return {
-      ...report,
-      canonicalCompany: normalized,
-      duplicateOf: report.duplicateOf ?? null,
-      timestamp: new Date(report.time).getTime()
-    };
+    return normalizeReport(
+      {
+        id: `archive-${archive.id}`,
+        broker: archive.broker || "Unmapped Broker",
+        company: companyGuess,
+        type: reportType,
+        coverage: "Email Archive",
+        time: archive.dateHeader || archive.ingestedAt,
+        summary: archive.bodyPreview || archive.snippet || "(No preview)",
+        sentiment: "neutral",
+        links: {
+          archive: toApiAbsolute(archive.downloadUrl),
+          pdf: archive.attachments?.[0] ? toApiAbsolute(archive.attachments[0].downloadUrl) : "#",
+          gmail: archive.gmailMessageUrl || "#"
+        }
+      },
+      dictionaryMap
+    );
   });
+
+  return [...normalizedSeed, ...normalizedArchive];
+}
+
+function normalizeReport(report, dictionaryMap) {
+  const canonicalCompany = dictionaryMap.get(normalizeKey(report.company)) ?? report.company;
+  return {
+    ...report,
+    canonicalCompany,
+    duplicateOf: report.duplicateOf ?? null,
+    timestamp: new Date(report.time).getTime()
+  };
+}
+
+function guessCompanyFromSubject(subject) {
+  const source = (subject || "").trim();
+  if (!source) {
+    return "Unclassified Company";
+  }
+
+  const separators = ["|", "-", "–", ":"];
+  for (const separator of separators) {
+    if (source.includes(separator)) {
+      return source.split(separator)[0].trim();
+    }
+  }
+
+  return source.split(" ").slice(0, 3).join(" ").trim();
+}
+
+function classifyReportType(subject, bodyPreview) {
+  const text = `${subject} ${bodyPreview}`.toLowerCase();
+  if (text.includes("initiat")) {
+    return "Initiation";
+  }
+  if (text.includes("result") || text.includes("q1") || text.includes("q2") || text.includes("q3") || text.includes("q4")) {
+    return "Results Update";
+  }
+  if (text.includes("sector") || text.includes("weekly") || text.includes("monitor")) {
+    return "Sector Update";
+  }
+  return "General Update";
 }
 
 function refreshAfterDictionaryChange() {
   persistDictionary();
   hydrateBrokerFilter();
   hydrateCompanySelect();
-  renderDashboard();
-  renderCompanyView();
-  renderSettings();
-  renderDigest();
+  renderAllDataViews();
 }
 
 async function checkBackendStatus() {
   refs.backendStatus.textContent = "Backend status: checking...";
 
   try {
-    const response = await fetch(`${state.apiBase.replace(/\/$/, "")}/api/health`);
+    const response = await fetch(`${getApiBase()}/api/health`);
     if (!response.ok) {
       refs.backendStatus.textContent = `Backend status: failed (HTTP ${response.status})`;
       return;
@@ -731,6 +1009,256 @@ async function checkBackendStatus() {
   } catch {
     refs.backendStatus.textContent = "Backend status: unreachable";
   }
+}
+
+async function refreshAuthState() {
+  renderAuthUi();
+  if (!state.auth.token) {
+    state.auth.user = null;
+    state.auth.gmailConnected = false;
+    state.archives.items = [];
+    state.archives.total = 0;
+    renderAllDataViews();
+    return;
+  }
+
+  state.auth.loading = true;
+  renderAuthUi();
+
+  try {
+    const me = await apiFetch("/api/auth/me");
+    state.auth.user = me.user;
+    state.auth.gmailConnected = Boolean(me.gmail?.connected);
+    if (me.ingestionPreferences?.query) {
+      setPipelineMessage(`Auth connected. Gmail query default: ${me.ingestionPreferences.query}`);
+    } else {
+      setPipelineMessage("Auth connected.");
+    }
+
+    await fetchArchives();
+  } catch {
+    clearAuthToken();
+    state.auth.user = null;
+    state.auth.gmailConnected = false;
+    setPipelineMessage("Session expired. Please sign in with Google again.");
+  } finally {
+    state.auth.loading = false;
+    renderAuthUi();
+    renderAllDataViews();
+  }
+}
+
+async function startGoogleAuth() {
+  try {
+    const redirectUri = `${window.location.origin}${window.location.pathname}`;
+    const response = await fetch(
+      `${getApiBase()}/api/auth/google/url?redirect_uri=${encodeURIComponent(redirectUri)}`
+    );
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Unable to start Google auth flow");
+    }
+
+    window.location.assign(payload.authUrl);
+  } catch (error) {
+    setPipelineMessage(`Google auth start failed: ${error.message}`);
+  }
+}
+
+async function signOut() {
+  try {
+    if (state.auth.token) {
+      await apiFetch("/api/auth/logout", { method: "POST" });
+    }
+  } catch {
+    // Continue clearing local session regardless of API result.
+  }
+
+  clearAuthToken();
+  state.auth.user = null;
+  state.auth.gmailConnected = false;
+  state.archives.items = [];
+  state.archives.total = 0;
+  setPipelineMessage("Signed out.");
+  renderAll();
+}
+
+function handleAuthCallbackFromHash() {
+  const hash = window.location.hash.replace(/^#/, "");
+  if (!hash) {
+    return;
+  }
+
+  const params = new URLSearchParams(hash);
+  const authState = params.get("auth");
+
+  if (!authState) {
+    return;
+  }
+
+  if (authState === "success") {
+    const token = params.get("token") || "";
+    const email = params.get("email") || "";
+    if (token) {
+      state.auth.token = token;
+      localStorage.setItem(STORAGE_KEYS.authToken, token);
+      setPipelineMessage(`Google auth successful for ${email || "connected user"}.`);
+    }
+  }
+
+  if (authState === "error") {
+    const message = params.get("message") || "Google auth failed";
+    setPipelineMessage(`Google auth error: ${message}`);
+  }
+
+  history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+}
+
+async function fetchArchives() {
+  if (!state.auth.token) {
+    state.archives.items = [];
+    state.archives.total = 0;
+    return;
+  }
+
+  try {
+    const response = await apiFetch("/api/email-archives?limit=100&offset=0");
+    state.archives.items = Array.isArray(response.items) ? response.items : [];
+    state.archives.total = Number(response.total ?? state.archives.items.length);
+    state.archives.fetchedAt = new Date().toISOString();
+    hydrateBrokerFilter();
+    hydrateCompanySelect();
+  } catch (error) {
+    setPipelineMessage(`Failed to load archives: ${error.message}`);
+  }
+}
+
+async function fetchNotifications() {
+  state.notifications.loading = true;
+  state.notifications.error = "";
+  renderNotifications();
+
+  const symbol = (refs.notificationsSymbolInput?.value ?? "").trim().toUpperCase();
+  const limitInput = Number.parseInt(refs.notificationsLimitSelect?.value ?? "50", 10);
+  const limit = Number.isFinite(limitInput) ? Math.max(1, Math.min(500, limitInput)) : 50;
+
+  state.notifications.symbol = symbol;
+  state.notifications.limit = limit;
+
+  const params = new URLSearchParams({
+    limit: String(limit)
+  });
+
+  if (symbol) {
+    params.set("symbol", symbol);
+  }
+
+  try {
+    const payload = await apiFetch(`/api/notifications/announcements?${params.toString()}`);
+    state.notifications.items = Array.isArray(payload.announcements) ? payload.announcements : [];
+    state.notifications.total = Number(payload.total ?? state.notifications.items.length);
+    state.notifications.lastSyncAt = typeof payload.lastNseSyncAt === "string" ? payload.lastNseSyncAt : null;
+    state.notifications.lastSyncStats =
+      payload.lastNseSyncStats && typeof payload.lastNseSyncStats === "object" ? payload.lastNseSyncStats : null;
+  } catch (error) {
+    try {
+      const fallbackResponse = await fetch("./backend/data/nse_announcements.json", { cache: "no-store" });
+      if (!fallbackResponse.ok) {
+        throw new Error(`Fallback file not found (${fallbackResponse.status})`);
+      }
+
+      const fallbackPayload = await fallbackResponse.json();
+      const allItems = Array.isArray(fallbackPayload?.announcements) ? fallbackPayload.announcements : [];
+      const filteredItems = symbol
+        ? allItems.filter((item) => String(item.symbol ?? "").toUpperCase() === symbol)
+        : allItems;
+
+      state.notifications.items = filteredItems.slice(0, limit);
+      state.notifications.total = filteredItems.length;
+      state.notifications.lastSyncAt = typeof fallbackPayload?.lastNseSyncAt === "string" ? fallbackPayload.lastNseSyncAt : null;
+      state.notifications.lastSyncStats =
+        fallbackPayload?.lastNseSyncStats && typeof fallbackPayload.lastNseSyncStats === "object"
+          ? fallbackPayload.lastNseSyncStats
+          : null;
+      state.notifications.error = "";
+    } catch {
+      state.notifications.items = [];
+      state.notifications.total = 0;
+      state.notifications.error = error instanceof Error ? error.message : "Unknown error";
+    }
+  } finally {
+    state.notifications.loading = false;
+    renderNotifications();
+  }
+}
+
+function getVisibleArchives() {
+  let records = [...state.archives.items];
+
+  if (state.archives.brokerFilter !== "All") {
+    records = records.filter((item) => item.broker === state.archives.brokerFilter);
+  }
+
+  if (state.archives.search) {
+    records = records.filter((item) => {
+      const haystack = `${item.subject || ""} ${item.from || ""} ${item.snippet || ""}`.toLowerCase();
+      return haystack.includes(state.archives.search);
+    });
+  }
+
+  return records;
+}
+
+async function apiFetch(endpoint, options = {}) {
+  const request = {
+    method: options.method || "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  };
+
+  if (options.body !== undefined) {
+    request.body = options.body;
+  }
+
+  if (state.auth.token) {
+    request.headers.Authorization = `Bearer ${state.auth.token}`;
+  }
+
+  const response = await fetch(`${getApiBase()}${endpoint}`, request);
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      clearAuthToken();
+      renderAuthUi();
+    }
+    throw new Error(payload.error || `Request failed (${response.status})`);
+  }
+
+  return payload;
+}
+
+function getApiBase() {
+  return state.apiBase.replace(/\/$/, "");
+}
+
+function toApiAbsolute(relativeOrAbsoluteUrl) {
+  if (!relativeOrAbsoluteUrl || relativeOrAbsoluteUrl === "#") {
+    return "#";
+  }
+
+  if (/^https?:\/\//i.test(relativeOrAbsoluteUrl)) {
+    return relativeOrAbsoluteUrl;
+  }
+
+  if (relativeOrAbsoluteUrl.startsWith("/")) {
+    return `${getApiBase()}${relativeOrAbsoluteUrl}`;
+  }
+
+  return relativeOrAbsoluteUrl;
 }
 
 function addCompanyToList(kind, rawCompany) {
@@ -751,10 +1279,7 @@ function addCompanyToList(kind, rawCompany) {
     }
   }
 
-  renderDashboard();
-  renderCompanyView();
-  renderSettings();
-  renderDigest();
+  renderAllDataViews();
 }
 
 function normalizeCompanyName(input) {
@@ -794,6 +1319,18 @@ function setPipelineMessage(message) {
   state.pipelineMessage = message;
   refs.pipelineStatus.textContent = `Pipeline status: ${message}`;
   renderDigest();
+}
+
+function clearAuthToken() {
+  state.auth.token = "";
+  localStorage.removeItem(STORAGE_KEYS.authToken);
+}
+
+async function copyToClipboard(text) {
+  if (!navigator.clipboard || !window.isSecureContext) {
+    return;
+  }
+  await navigator.clipboard.writeText(text);
 }
 
 function groupBy(items, field) {

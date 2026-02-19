@@ -12,10 +12,11 @@
         <div class="header-row">
           <div class="brand">
             <h1>AI Web App</h1>
-            <p>Sub-app 1: Brokerage Emails</p>
+            <p>Sub-app 1: Brokerage Emails | Sub-app 2: Notifications</p>
           </div>
           <div class="header-actions">
-            <button id="google-connect-btn" class="btn">Google Sign-In (Next)</button>
+            <button id="google-connect-btn" class="btn">Sign in with Google</button>
+            <button id="signout-btn" class="btn">Sign out</button>
             <button id="run-ingest-btn" class="btn">Run ingest now</button>
             <button id="send-digest-btn" class="btn primary">Send digest preview</button>
           </div>
@@ -23,12 +24,15 @@
 
         <div class="status-strip">
           <span id="backend-status">Backend status: checking...</span>
+          <span id="auth-status">Auth status: not signed in</span>
           <span id="pipeline-status">Pipeline status: using frontend mock data</span>
         </div>
 
         <nav class="view-tabs" aria-label="Brokerage Email Views">
           <button class="tab active" data-view="dashboard">Dashboard</button>
+          <button class="tab" data-view="archive">Archive</button>
           <button class="tab" data-view="company">Company View</button>
+          <button class="tab" data-view="notifications">Notifications</button>
           <button class="tab" data-view="settings">Settings</button>
           <button class="tab" data-view="digest">Digest Preview</button>
         </nav>
@@ -68,6 +72,40 @@
           <div class="broker-lanes" id="broker-lanes"></div>
         </section>
 
+        <section id="view-archive" class="view">
+          <article class="panel">
+            <header>Archived Source Emails</header>
+            <div class="panel-body">
+              <div class="archive-toolbar">
+                <label>
+                  Broker
+                  <select id="archive-broker-filter"></select>
+                </label>
+                <label>
+                  Search subject/from
+                  <input id="archive-search" type="search" placeholder="Reliance, Axis, results..." />
+                </label>
+                <button id="archive-refresh-btn" class="btn" type="button">Refresh archive list</button>
+              </div>
+              <div id="archive-summary" class="note"></div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Broker</th>
+                      <th>From</th>
+                      <th>Subject</th>
+                      <th>Source Links</th>
+                    </tr>
+                  </thead>
+                  <tbody id="archive-table"></tbody>
+                </table>
+              </div>
+            </div>
+          </article>
+        </section>
+
         <section id="view-company" class="view">
           <div class="company-topbar">
             <label>
@@ -93,6 +131,45 @@
               <div class="panel-body" id="company-workbench"></div>
             </aside>
           </div>
+        </section>
+
+        <section id="view-notifications" class="view">
+          <article class="panel">
+            <header>NSE Announcements (Today Pull)</header>
+            <div class="panel-body">
+              <div class="notifications-toolbar">
+                <label>
+                  Symbol filter
+                  <input id="notifications-symbol-input" type="text" placeholder="Example: TCS" />
+                </label>
+                <label>
+                  Limit
+                  <select id="notifications-limit-select">
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                  </select>
+                </label>
+                <button id="notifications-refresh-btn" class="btn" type="button">Refresh announcements</button>
+              </div>
+              <div id="notifications-meta" class="note"></div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Symbol</th>
+                      <th>Company</th>
+                      <th>Type</th>
+                      <th>Attachment</th>
+                    </tr>
+                  </thead>
+                  <tbody id="notifications-table"></tbody>
+                </table>
+              </div>
+            </div>
+          </article>
         </section>
 
         <section id="view-settings" class="view">
