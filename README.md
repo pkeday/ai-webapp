@@ -38,15 +38,10 @@ git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
 git push -u origin main
 ```
 
-## 3) Turn on GitHub Pages deployment
+## 3) Live URL (already configured)
 
-In your GitHub repo:
-1. Go to `Settings` -> `Pages`.
-2. Under `Build and deployment`, choose `GitHub Actions`.
-3. Push to `main` again (or open the `Actions` tab and run workflow manually).
-
-Your live URL becomes:
-`https://YOUR_USERNAME.github.io/YOUR_REPO/`
+Your site is live at:
+`https://pkeday.github.io/ai-webapp/`
 
 ## 4) Update site after changes
 
@@ -58,7 +53,7 @@ git commit -m "Describe update"
 git push
 ```
 
-GitHub Action auto-deploys the latest version.
+GitHub Pages auto-updates the site after each push to `main`.
 
 Optional helper (already included in this project):
 
@@ -78,3 +73,4 @@ Use prompts like:
 
 - This starter is plain HTML/CSS/JS, so no npm install is needed.
 - If you later want React/Next.js, we can upgrade this project when npm/network access is available.
+- You only need a custom domain later if you want your own URL. GitHub Pages URL works now.
