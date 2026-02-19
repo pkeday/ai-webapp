@@ -313,6 +313,18 @@ function normalizeText(value) {
   return String(value).trim();
 }
 
+function sanitizeSensitiveText(value) {
+  const text = normalizeText(value);
+  if (!text) {
+    return "";
+  }
+
+  return text
+    .replace(/sk-[A-Za-z0-9_\-]{10,}/g, "[REDACTED_OPENAI_KEY]")
+    .replace(/AIza[A-Za-z0-9_\-]{10,}/g, "[REDACTED_GEMINI_KEY]")
+    .replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, "Bearer [REDACTED_TOKEN]");
+}
+
 function normalizeComparableText(value) {
   const normalized = normalizeText(value).toUpperCase();
   if (!normalized) {
@@ -1053,8 +1065,8 @@ async function classifyWithOpenAi(model, prompt, apiKey, baseUrl) {
   });
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`);
+    const body = sanitizeSensitiveText(await response.text());
+    throw new Error(`OpenAI HTTP ${response.status}: ${body.slice(0, 300)}`);
   }
 
   const payload = await response.json();
@@ -1112,8 +1124,8 @@ async function classifyWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
   });
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Gemini HTTP ${response.status}: ${body.slice(0, 500)}`);
+    const body = sanitizeSensitiveText(await response.text());
+    throw new Error(`Gemini HTTP ${response.status}: ${body.slice(0, 300)}`);
   }
 
   const payload = await response.json();
@@ -1353,7 +1365,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = []) {
       upsertAiLabelRecord(result);
       return { key: dedupAnnouncementKey, ok: true, provider: result.provider, model: result.model };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown AI classification error";
+      const message = sanitizeSensitiveText(error instanceof Error ? error.message : "Unknown AI classification error");
       upsertAiLabelRecord({
         dedupAnnouncementKey,
         inputHash,
