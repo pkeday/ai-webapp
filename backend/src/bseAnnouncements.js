@@ -1,12 +1,17 @@
 const BSE_BASE_URL = "https://www.bseindia.com";
 const BSE_API_URL = "https://api.bseindia.com";
 const BSE_ANNOUNCEMENTS_API_PATH = "/BseIndiaAPI/api/AnnSubCategoryGetData/w";
+const BSE_SCRIP_MASTER_API_PATH = "/BseIndiaAPI/api/ListofScripData/w";
 
 const DEFAULT_CATEGORY = "-1";
 const DEFAULT_SUBCATEGORY = "-1";
 const DEFAULT_TYPE = "C";
 const DEFAULT_SEARCH = "P";
 const DEFAULT_SCRIP = "";
+const DEFAULT_SCRIP_MASTER_SEGMENT = "Equity";
+const DEFAULT_SCRIP_MASTER_STATUS = "";
+const DEFAULT_SCRIP_MASTER_GROUP = "";
+const DEFAULT_SCRIP_MASTER_SCRIP_CODE = "";
 
 function buildBrowserHeaders() {
   return {
@@ -64,6 +69,42 @@ function normalizeFieldValue(value) {
   return value;
 }
 
+function normalizeScripCode(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const normalized = String(value).trim();
+  return normalized || null;
+}
+
+function normalizeIsin(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const normalized = String(value).trim().toUpperCase();
+  return normalized || null;
+}
+
+function resolveIsinFromMap(isinByScripCode, scripCode) {
+  if (!scripCode || !isinByScripCode) {
+    return null;
+  }
+
+  if (isinByScripCode instanceof Map) {
+    const isin = isinByScripCode.get(scripCode);
+    return normalizeIsin(isin);
+  }
+
+  if (typeof isinByScripCode === "object") {
+    const isin = isinByScripCode[scripCode];
+    return normalizeIsin(isin);
+  }
+
+  return null;
+}
+
 export function cleanBseAnnouncement(raw) {
   const fieldMapping = {
     NEWSID: "news_id",
@@ -103,6 +144,7 @@ export function cleanBseAnnouncement(raw) {
     cleaned.xml_url = null;
   }
 
+  cleaned.isin = null;
   cleaned.scraped_at = new Date().toISOString();
   return cleaned;
 }
@@ -131,6 +173,82 @@ export function getDefaultBseDateRange(lookbackDays = 1, now = new Date()) {
   return {
     fromDate: formatDateToDdMmYyyy(fromDateObj),
     toDate: formatDateToDdMmYyyy(now)
+  };
+}
+
+export async function fetchBseIsinMap({
+  timeoutMs = 30_000,
+  segment = DEFAULT_SCRIP_MASTER_SEGMENT,
+  status = DEFAULT_SCRIP_MASTER_STATUS,
+  group = DEFAULT_SCRIP_MASTER_GROUP,
+  scripCode = DEFAULT_SCRIP_MASTER_SCRIP_CODE
+} = {}) {
+  const headers = buildBrowserHeaders();
+  const query = new URLSearchParams({
+    segment: String(segment ?? DEFAULT_SCRIP_MASTER_SEGMENT),
+    status: String(status ?? DEFAULT_SCRIP_MASTER_STATUS),
+    Group: String(group ?? DEFAULT_SCRIP_MASTER_GROUP),
+    Scripcode: String(scripCode ?? DEFAULT_SCRIP_MASTER_SCRIP_CODE)
+  });
+
+  const response = await fetch(`${BSE_API_URL}${BSE_SCRIP_MASTER_API_PATH}?${query}`, {
+    method: "GET",
+    headers,
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+
+  if (!response.ok) {
+    throw new Error(`BSE ISIN master fetch failed with status ${response.status}`);
+  }
+
+  const payload = await response.json();
+  if (!Array.isArray(payload)) {
+    throw new Error("BSE ISIN master response is not a list");
+  }
+
+  const isinByScripCode = new Map();
+
+  for (const row of payload) {
+    const normalizedScripCode = normalizeScripCode(row?.SCRIP_CD ?? row?.SCRIPCODE ?? row?.ScripCode ?? row?.scrip_code);
+    if (!normalizedScripCode) {
+      continue;
+    }
+
+    const normalizedIsin = normalizeIsin(row?.ISIN_NUMBER ?? row?.ISIN ?? row?.isin);
+    const previous = isinByScripCode.get(normalizedScripCode);
+
+    if (!previous || normalizedIsin) {
+      isinByScripCode.set(normalizedScripCode, normalizedIsin);
+    }
+  }
+
+  return isinByScripCode;
+}
+
+export function enrichBseAnnouncementsWithIsin(announcements, isinByScripCode) {
+  const source = Array.isArray(announcements) ? announcements : [];
+  const enriched = [];
+  let withIsinCount = 0;
+
+  for (const announcement of source) {
+    const normalizedScripCode = normalizeScripCode(announcement?.scrip_code);
+    const mappedIsin = resolveIsinFromMap(isinByScripCode, normalizedScripCode);
+    const existingIsin = normalizeIsin(announcement?.isin);
+    const isin = mappedIsin ?? existingIsin;
+
+    if (isin) {
+      withIsinCount += 1;
+    }
+
+    enriched.push({
+      ...announcement,
+      isin
+    });
+  }
+
+  return {
+    announcements: enriched,
+    withIsinCount
   };
 }
 

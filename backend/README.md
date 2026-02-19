@@ -33,6 +33,8 @@ Production setup in this project:
 - `BSE_STORAGE_FILE`: Path to local JSON store (default: `data/bse_announcements.json`).
 - `BSE_PAGE_SIZE`: BSE page size for paginated API fetch (default: `100`).
 - `BSE_PAGE_DELAY_MS`: Delay between BSE page fetches in ms (default: `500`).
+- `COMBINED_STORAGE_FILE`: Path to deduped NSE+BSE store (default: `data/combined_announcements.json`).
+- `COMBINED_MAX_STORED`: Max deduped combined announcements retained (default: `10000`).
 
 ## API endpoints
 
@@ -43,11 +45,13 @@ Production setup in this project:
 - `POST /api/notes` body `{ "text": "..." }`
 - `POST /api/jobs/daily` (optional secret in `x-cron-secret`)
 - `POST /api/internal/worker-heartbeat` (optional secret in `x-cron-secret`)
-- `GET /api/notifications/announcements?exchange=NSE|BSE|ALL&limit=100&symbol=TCS`
+- `GET /api/notifications/announcements?exchange=NSE|BSE|BSE+NSE|ALL&limit=100&symbol=TCS`
 
 ## Notifications sync flow (NSE + BSE)
 
 - GitHub Actions triggers `POST /api/jobs/daily` on schedule.
 - Server fetches NSE and BSE corporate announcements in the same cron run.
+- BSE records are enriched with `isin` using BSE scrip master data (`ListofScripData` API) before storage.
 - New records are deduplicated per exchange and stored in separate files (`NSE_STORAGE_FILE`, `BSE_STORAGE_FILE`).
+- A separate deduped combined table (`COMBINED_STORAGE_FILE`) is rebuilt using ISIN + date + (attachment or subject) and served with `exchange=BSE+NSE`.
 - Notifications data is served via `GET /api/notifications/announcements`.

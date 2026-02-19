@@ -80,7 +80,8 @@ Current backend cron behavior:
 - Fetches NSE corporate announcements
 - Fetches BSE corporate announcements in the same cron run
 - Stores only new (deduplicated) records in separate backend stores for each exchange
-- Exposes data at `GET /api/notifications/announcements?exchange=NSE|BSE`
+- Builds a separate deduped combined table for cross-listed NSE/BSE duplicates (ISIN-driven)
+- Exposes data at `GET /api/notifications/announcements?exchange=NSE|BSE|BSE+NSE|ALL`
 
 Required GitHub repository secrets:
 - `API_BASE_URL`

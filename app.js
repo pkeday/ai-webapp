@@ -871,15 +871,25 @@ function renderNotifications() {
     details.push(`range: ${stats.fromDate} to ${stats.toDate}`);
   }
 
+  if (state.notifications.exchange === "BSE+NSE" && stats) {
+    if (Number.isFinite(stats.inputCount)) {
+      details.push(`deduped: ${state.notifications.total} unique from ${stats.inputCount} source records`);
+    }
+
+    if (Number.isFinite(stats.crossExchangeMergedCount)) {
+      details.push(`cross-exchange merges: ${stats.crossExchangeMergedCount}`);
+    }
+  }
+
   refs.notificationsMeta.textContent = details.join(" | ");
 
   if (state.notifications.loading) {
-    refs.notificationsTable.innerHTML = '<tr><td colspan="5"><div class="empty-state">Loading announcements...</div></td></tr>';
+    refs.notificationsTable.innerHTML = '<tr><td colspan="6"><div class="empty-state">Loading announcements...</div></td></tr>';
     return;
   }
 
   if (state.notifications.error) {
-    refs.notificationsTable.innerHTML = `<tr><td colspan="5"><div class="empty-state">Failed to load announcements: ${escapeHtml(
+    refs.notificationsTable.innerHTML = `<tr><td colspan="6"><div class="empty-state">Failed to load announcements: ${escapeHtml(
       state.notifications.error
     )}</div></td></tr>`;
     return;
@@ -887,19 +897,54 @@ function renderNotifications() {
 
   if (state.notifications.items.length === 0) {
     refs.notificationsTable.innerHTML =
-      '<tr><td colspan="5"><div class="empty-state">No announcements found for the selected filter.</div></td></tr>';
+      '<tr><td colspan="6"><div class="empty-state">No announcements found for the selected filter.</div></td></tr>';
     return;
   }
 
   refs.notificationsTable.innerHTML = state.notifications.items
     .map((item) => {
-      const exchange = String(item.exchange ?? state.notifications.exchange ?? "NSE").toUpperCase();
-      const timestamp = exchange === "BSE" ? item.datetime || item.news_date || "-" : item.an_dt || item.exchdisstime || "-";
-      const symbol = exchange === "BSE" ? item.scrip_code || "-" : item.symbol || "-";
-      const company = exchange === "BSE" ? item.company_name || "-" : item.sm_name || "-";
-      const type = exchange === "BSE" ? item.category || item.subcategory || item.subject || "-" : item.desc || "-";
-      const attachmentUrl =
-        exchange === "BSE" ? item.attachment_url || item.attachment_url_fallback || null : item.attchmntfile || null;
+      const selectedExchange = String(state.notifications.exchange ?? "NSE").toUpperCase();
+      const exchange = String(item.exchange ?? selectedExchange).toUpperCase();
+      const combinedView = selectedExchange === "BSE+NSE" || exchange === "BSE+NSE" || exchange === "COMBINED";
+
+      let exchangeLabel = exchange;
+      let timestamp = "-";
+      let symbol = "-";
+      let company = "-";
+      let type = "-";
+      let attachmentUrl = null;
+
+      if (combinedView) {
+        const sourceExchanges = Array.isArray(item.exchanges)
+          ? item.exchanges.map((value) => String(value).toUpperCase()).filter(Boolean)
+          : [];
+        exchangeLabel = sourceExchanges.length > 0 ? sourceExchanges.join("+") : exchange === "COMBINED" ? "BSE+NSE" : exchange;
+        timestamp = item.timestamp || "-";
+        symbol = item.symbol || "-";
+        company = item.company || "-";
+        type = item.type || "-";
+        attachmentUrl = item.attachment_url || null;
+
+        const mergedCount = Number.parseInt(String(item.mergedFromCount ?? "0"), 10);
+        if (Number.isFinite(mergedCount) && mergedCount > 1) {
+          type = `${type} (merged ${mergedCount}x)`;
+        }
+      } else if (exchange === "BSE") {
+        exchangeLabel = "BSE";
+        timestamp = item.datetime || item.news_date || "-";
+        symbol = item.scrip_code || "-";
+        company = item.company_name || "-";
+        type = item.category || item.subcategory || item.subject || "-";
+        attachmentUrl = item.attachment_url || item.attachment_url_fallback || null;
+      } else {
+        exchangeLabel = "NSE";
+        timestamp = item.an_dt || item.exchdisstime || "-";
+        symbol = item.symbol || "-";
+        company = item.sm_name || "-";
+        type = item.desc || "-";
+        attachmentUrl = item.attchmntfile || null;
+      }
+
       const attachment = attachmentUrl
         ? `<a class="link-btn" href="${escapeAttribute(attachmentUrl)}" target="_blank" rel="noopener">Open</a>`
         : "-";
@@ -907,6 +952,7 @@ function renderNotifications() {
       return `
         <tr>
           <td>${escapeHtml(timestamp)}</td>
+          <td>${escapeHtml(exchangeLabel)}</td>
           <td>${escapeHtml(symbol)}</td>
           <td>${escapeHtml(company)}</td>
           <td>${escapeHtml(type)}</td>
@@ -1158,24 +1204,38 @@ async function fetchArchives() {
 }
 
 function extractExchangeSync(payload, exchange) {
-  const fallbackAtKey = exchange === "BSE" ? "lastBseSyncAt" : "lastNseSyncAt";
-  const fallbackStatsKey = exchange === "BSE" ? "lastBseSyncStats" : "lastNseSyncStats";
+  const normalizedExchange = exchange === "BSE+NSE" || exchange === "COMBINED" ? "COMBINED" : exchange;
+  const fallbackAtKey =
+    normalizedExchange === "BSE" ? "lastBseSyncAt" : normalizedExchange === "COMBINED" ? "lastCombinedSyncAt" : "lastNseSyncAt";
+  const fallbackStatsKey =
+    normalizedExchange === "BSE"
+      ? "lastBseSyncStats"
+      : normalizedExchange === "COMBINED"
+        ? "lastCombinedSyncStats"
+        : "lastNseSyncStats";
   let syncAt = null;
   let syncStats = null;
 
   if (typeof payload?.lastSyncAt === "string") {
     syncAt = payload.lastSyncAt;
-  } else if (payload?.lastSyncAt && typeof payload.lastSyncAt === "object" && typeof payload.lastSyncAt[exchange] === "string") {
-    syncAt = payload.lastSyncAt[exchange];
+  } else if (payload?.lastSyncAt && typeof payload.lastSyncAt === "object") {
+    const objectSyncAt = payload.lastSyncAt;
+    if (typeof objectSyncAt[exchange] === "string") {
+      syncAt = objectSyncAt[exchange];
+    } else if (typeof objectSyncAt[normalizedExchange] === "string") {
+      syncAt = objectSyncAt[normalizedExchange];
+    }
   } else if (typeof payload?.[fallbackAtKey] === "string") {
     syncAt = payload[fallbackAtKey];
   }
 
   if (payload?.lastSyncStats && typeof payload.lastSyncStats === "object" && !Array.isArray(payload.lastSyncStats)) {
-    if (payload.lastSyncStats.exchange === exchange) {
+    if (payload.lastSyncStats.exchange === exchange || payload.lastSyncStats.exchange === normalizedExchange) {
       syncStats = payload.lastSyncStats;
     } else if (payload.lastSyncStats[exchange] && typeof payload.lastSyncStats[exchange] === "object") {
       syncStats = payload.lastSyncStats[exchange];
+    } else if (payload.lastSyncStats[normalizedExchange] && typeof payload.lastSyncStats[normalizedExchange] === "object") {
+      syncStats = payload.lastSyncStats[normalizedExchange];
     }
   }
 
@@ -1192,20 +1252,39 @@ function fallbackSymbolMatch(item, exchange, symbol) {
   }
 
   const query = symbol.toUpperCase();
+  if (exchange === "BSE+NSE" || exchange === "COMBINED") {
+    const combinedSymbol = String(item?.symbol ?? "").toUpperCase();
+    const combinedCompany = String(item?.company ?? "").toUpperCase();
+    const combinedIsin = String(item?.isin ?? "").toUpperCase();
+    if (combinedSymbol === query || combinedCompany.includes(query) || combinedIsin === query) {
+      return true;
+    }
+
+    const sourceAnnouncements = Array.isArray(item?.sourceAnnouncements) ? item.sourceAnnouncements : [];
+    return sourceAnnouncements.some((source) => {
+      const sourceSymbol = String(source?.symbol ?? "").toUpperCase();
+      const sourceCompany = String(source?.company ?? "").toUpperCase();
+      const sourceIsin = String(source?.isin ?? "").toUpperCase();
+      return sourceSymbol === query || sourceCompany.includes(query) || sourceIsin === query;
+    });
+  }
+
   if (exchange === "BSE") {
     const scripCode = String(item?.scrip_code ?? "").toUpperCase();
     const companyName = String(item?.company_name ?? "").toUpperCase();
-    return scripCode === query || companyName.includes(query);
+    const isin = String(item?.isin ?? "").toUpperCase();
+    return scripCode === query || companyName.includes(query) || isin === query;
   }
 
   const nseSymbol = String(item?.symbol ?? "").toUpperCase();
   const companyName = String(item?.sm_name ?? "").toUpperCase();
-  return nseSymbol === query || companyName.includes(query);
+  const isin = String(item?.sm_isin ?? "").toUpperCase();
+  return nseSymbol === query || companyName.includes(query) || isin === query;
 }
 
 async function fetchNotifications() {
   const exchangeInput = String(refs.notificationsExchangeSelect?.value ?? "NSE").trim().toUpperCase();
-  const exchange = exchangeInput === "BSE" ? "BSE" : "NSE";
+  const exchange = exchangeInput === "BSE" ? "BSE" : exchangeInput === "BSE+NSE" ? "BSE+NSE" : "NSE";
   const symbol = (refs.notificationsSymbolInput?.value ?? "").trim().toUpperCase();
   const limitInput = Number.parseInt(refs.notificationsLimitSelect?.value ?? "50", 10);
   const limit = Number.isFinite(limitInput) ? Math.max(1, Math.min(500, limitInput)) : 50;
@@ -1241,14 +1320,19 @@ async function fetchNotifications() {
       total: Number(payload?.total ?? items.length),
       lastSyncAt: syncAt,
       lastSyncStats: syncStats,
-      source: `backend API (${exchange})`
+      source: exchange === "BSE+NSE" ? "backend API (BSE+NSE deduped)" : `backend API (${exchange})`
     };
   } catch (error) {
     apiError = error instanceof Error ? error.message : "Unknown API error";
   }
 
   try {
-    const fallbackFile = exchange === "BSE" ? "./backend/data/bse_announcements.json" : "./backend/data/nse_announcements.json";
+    const fallbackFile =
+      exchange === "BSE"
+        ? "./backend/data/bse_announcements.json"
+        : exchange === "BSE+NSE"
+          ? "./backend/data/combined_announcements.json"
+          : "./backend/data/nse_announcements.json";
     const fallbackResponse = await fetch(fallbackFile, { cache: "no-store" });
     if (!fallbackResponse.ok) {
       throw new Error(`Fallback file not found (${fallbackResponse.status})`);
@@ -1268,7 +1352,7 @@ async function fetchNotifications() {
       total: normalizedItems.length,
       lastSyncAt: syncAt,
       lastSyncStats: syncStats,
-      source: `bundled ${exchange} snapshot`
+      source: exchange === "BSE+NSE" ? "bundled BSE+NSE deduped snapshot" : `bundled ${exchange} snapshot`
     };
   } catch (error) {
     fallbackError = error instanceof Error ? error.message : "Unknown fallback error";
