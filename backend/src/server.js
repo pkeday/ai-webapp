@@ -273,6 +273,12 @@ const aiSystemPromptBaseSections = [
   aiCategoryGuidanceText,
   "Set needs_escalation true when confidence is below 0.8 or evidence is weak."
 ];
+const aiManualPromptRules = [
+  "If the filing is a schedule/intimation of analyst or institutional investor meetings (one-on-one/group, physical/virtual), classify as analyst_meeting unless it explicitly states the interaction is an earnings/results call.",
+  "Use earning_call_registration only when the meeting/call is explicitly tied to discussion of quarterly/annual financial results or earnings performance.",
+  "Letters to shareholders/CEO narrative updates remain others even if they casually mention rescheduling a call; do not classify these as analyst_meeting unless the primary document purpose is a formal analyst/investor meet notice.",
+  "For continuation updates that reference prior intimations and forward a material-subsidiary disclosure tied to a strategic transaction context, prefer ma (or divestment if the text indicates disposal/loss of control) instead of others."
+];
 
 const aiLabelStore = {
   loaded: false,
@@ -1118,12 +1124,24 @@ function buildAiPromptLearnedRules() {
 }
 
 function getAiSystemPromptText() {
+  const manualRules = aiManualPromptRules.filter((rule) => Boolean(normalizeText(rule)));
   const learnedRules = buildAiPromptLearnedRules();
-  if (learnedRules.length === 0) {
+  if (manualRules.length === 0 && learnedRules.length === 0) {
     return aiSystemPromptBaseSections.join("\n");
   }
 
-  return [...aiSystemPromptBaseSections, "Human-reviewed correction rules:", ...learnedRules].join("\n");
+  const sections = [...aiSystemPromptBaseSections];
+  if (manualRules.length > 0) {
+    sections.push("Manually curated correction rules:");
+    sections.push(...manualRules);
+  }
+
+  if (learnedRules.length > 0) {
+    sections.push("Human-reviewed correction rules:");
+    sections.push(...learnedRules);
+  }
+
+  return sections.join("\n");
 }
 
 function buildAiReviewDiagnostics() {
