@@ -139,6 +139,7 @@ const seedReports = [
 ];
 
 const state = {
+  section: "brokerage",
   view: "dashboard",
   apiBase: loadString(STORAGE_KEYS.apiBase, defaultApiBase),
   auth: {
@@ -152,12 +153,16 @@ const state = {
     brokerFilter: "All",
     search: "",
     fetchedAt: null,
-    total: 0
+    total: 0,
+    page: 1,
+    pageSize: 20
   },
   notifications: {
     items: [],
     total: 0,
     limit: 50,
+    page: 1,
+    totalPages: 1,
     exchange: "NSE",
     symbol: "",
     source: "",
@@ -188,6 +193,8 @@ const refs = {
   backendStatus: document.getElementById("backend-status"),
   authStatus: document.getElementById("auth-status"),
   pipelineStatus: document.getElementById("pipeline-status"),
+  sectionButtons: Array.from(document.querySelectorAll(".section-tab")),
+  brokerageViewTabs: document.getElementById("brokerage-view-tabs"),
   tabButtons: Array.from(document.querySelectorAll(".tab")),
   views: {
     dashboard: document.getElementById("view-dashboard"),
@@ -213,12 +220,18 @@ const refs = {
   archiveRefreshBtn: document.getElementById("archive-refresh-btn"),
   archiveSummary: document.getElementById("archive-summary"),
   archiveTable: document.getElementById("archive-table"),
+  archivePrevBtn: document.getElementById("archive-prev-btn"),
+  archiveNextBtn: document.getElementById("archive-next-btn"),
+  archivePageLabel: document.getElementById("archive-page-label"),
   notificationsExchangeSelect: document.getElementById("notifications-exchange-select"),
   notificationsSymbolInput: document.getElementById("notifications-symbol-input"),
   notificationsLimitSelect: document.getElementById("notifications-limit-select"),
   notificationsRefreshBtn: document.getElementById("notifications-refresh-btn"),
   notificationsMeta: document.getElementById("notifications-meta"),
   notificationsTable: document.getElementById("notifications-table"),
+  notificationsPrevBtn: document.getElementById("notifications-prev-btn"),
+  notificationsNextBtn: document.getElementById("notifications-next-btn"),
+  notificationsPageLabel: document.getElementById("notifications-page-label"),
   companySelect: document.getElementById("company-select"),
   companySort: document.getElementById("company-sort"),
   companyTimeline: document.getElementById("company-timeline"),
@@ -242,6 +255,9 @@ const refs = {
   scheduleSaveBtn: document.getElementById("schedule-save-btn")
 };
 
+let notificationsRequestSeq = 0;
+let notificationsAbortController = null;
+
 init();
 
 async function init() {
@@ -255,18 +271,45 @@ async function init() {
 }
 
 function bindEvents() {
+  const scheduleArchiveSearch = debounce(() => {
+    state.archives.page = 1;
+    renderArchiveView();
+  }, 140);
+  const scheduleNotificationsSearch = debounce(() => {
+    state.notifications.page = 1;
+    void fetchNotifications();
+  }, 220);
+
+  for (const button of refs.sectionButtons) {
+    button.addEventListener("click", () => {
+      const section = button.dataset.section;
+      if (!section) {
+        return;
+      }
+
+      const normalizedSection = section === "notifications" ? "notifications" : "brokerage";
+      if (normalizedSection === state.section) {
+        return;
+      }
+
+      state.section = normalizedSection;
+      renderViewState();
+
+      if (state.section === "notifications" && state.notifications.items.length === 0 && !state.notifications.loading) {
+        void fetchNotifications();
+      }
+    });
+  }
+
   for (const button of refs.tabButtons) {
     button.addEventListener("click", () => {
       const view = button.dataset.view;
       if (!view) {
         return;
       }
+      state.section = "brokerage";
       state.view = view;
       renderViewState();
-
-      if (view === "notifications" && state.notifications.items.length === 0 && !state.notifications.loading) {
-        void fetchNotifications();
-      }
     });
   }
 
@@ -310,6 +353,7 @@ function bindEvents() {
   });
 
   refs.sendDigestBtn.addEventListener("click", () => {
+    state.section = "brokerage";
     state.view = "digest";
     renderViewState();
     setPipelineMessage("Digest preview is ready. Email sending pipeline is next.");
@@ -337,16 +381,37 @@ function bindEvents() {
 
   refs.archiveBrokerFilter.addEventListener("change", (event) => {
     state.archives.brokerFilter = event.target.value;
+    state.archives.page = 1;
     renderArchiveView();
   });
 
   refs.archiveSearch.addEventListener("input", (event) => {
     state.archives.search = event.target.value.trim().toLowerCase();
-    renderArchiveView();
+    scheduleArchiveSearch();
   });
 
   refs.archiveRefreshBtn.addEventListener("click", async () => {
+    state.archives.page = 1;
     await fetchArchives();
+    renderArchiveView();
+  });
+
+  refs.archivePrevBtn.addEventListener("click", () => {
+    if (state.archives.page <= 1) {
+      return;
+    }
+
+    state.archives.page -= 1;
+    renderArchiveView();
+  });
+
+  refs.archiveNextBtn.addEventListener("click", () => {
+    const totalPages = getArchiveTotalPages();
+    if (state.archives.page >= totalPages) {
+      return;
+    }
+
+    state.archives.page += 1;
     renderArchiveView();
   });
 
@@ -355,11 +420,17 @@ function bindEvents() {
   });
 
   refs.notificationsExchangeSelect.addEventListener("change", async () => {
+    state.notifications.page = 1;
     await fetchNotifications();
   });
 
   refs.notificationsLimitSelect.addEventListener("change", async () => {
+    state.notifications.page = 1;
     await fetchNotifications();
+  });
+
+  refs.notificationsSymbolInput.addEventListener("input", () => {
+    scheduleNotificationsSearch();
   });
 
   refs.notificationsSymbolInput.addEventListener("keydown", async (event) => {
@@ -368,6 +439,25 @@ function bindEvents() {
     }
 
     event.preventDefault();
+    state.notifications.page = 1;
+    await fetchNotifications();
+  });
+
+  refs.notificationsPrevBtn.addEventListener("click", async () => {
+    if (state.notifications.page <= 1) {
+      return;
+    }
+
+    state.notifications.page -= 1;
+    await fetchNotifications();
+  });
+
+  refs.notificationsNextBtn.addEventListener("click", async () => {
+    if (state.notifications.page >= state.notifications.totalPages) {
+      return;
+    }
+
+    state.notifications.page += 1;
     await fetchNotifications();
   });
 
@@ -518,8 +608,25 @@ function renderAllDataViews() {
 
 function renderViewState() {
   for (const [viewName, element] of Object.entries(refs.views)) {
-    element.classList.toggle("active", viewName === state.view);
+    const isBrokerageView = viewName !== "notifications";
+    const isActive =
+      state.section === "notifications"
+        ? viewName === "notifications"
+        : isBrokerageView && viewName === state.view;
+    element.classList.toggle("active", isActive);
   }
+
+  for (const button of refs.sectionButtons) {
+    button.classList.toggle("active", button.dataset.section === state.section);
+  }
+
+  if (refs.brokerageViewTabs) {
+    refs.brokerageViewTabs.classList.toggle("hidden", state.section !== "brokerage");
+  }
+
+  const brokerageActionOnly = state.section === "brokerage";
+  refs.runIngestBtn.classList.toggle("hidden", !brokerageActionOnly);
+  refs.sendDigestBtn.classList.toggle("hidden", !brokerageActionOnly);
 
   for (const button of refs.tabButtons) {
     button.classList.toggle("active", button.dataset.view === state.view);
@@ -658,6 +765,10 @@ function renderReportCard(report) {
 
 function renderArchiveView() {
   const records = getVisibleArchives();
+  const totalPages = getArchiveTotalPages(records.length);
+  state.archives.page = Math.min(Math.max(state.archives.page, 1), totalPages);
+  const startIndex = (state.archives.page - 1) * state.archives.pageSize;
+  const pageItems = records.slice(startIndex, startIndex + state.archives.pageSize);
 
   const brokers = Array.from(new Set(state.archives.items.map((item) => item.broker))).sort();
   refs.archiveBrokerFilter.innerHTML = [
@@ -667,7 +778,18 @@ function renderArchiveView() {
   refs.archiveBrokerFilter.value = state.archives.brokerFilter;
 
   const fetchedText = state.archives.fetchedAt ? new Date(state.archives.fetchedAt).toLocaleString() : "not fetched yet";
-  refs.archiveSummary.innerHTML = `<strong>${records.length}</strong> visible archives (${state.archives.total} total loaded). Last fetch: ${escapeHtml(fetchedText)}.`;
+  refs.archiveSummary.innerHTML = `<strong>${records.length}</strong> visible archives (${state.archives.total} total loaded). Last fetch: ${escapeHtml(
+    fetchedText
+  )}. Page ${state.archives.page} of ${totalPages}.`;
+  if (refs.archivePageLabel) {
+    refs.archivePageLabel.textContent = `Page ${state.archives.page} of ${totalPages}`;
+  }
+  if (refs.archivePrevBtn) {
+    refs.archivePrevBtn.disabled = state.archives.page <= 1;
+  }
+  if (refs.archiveNextBtn) {
+    refs.archiveNextBtn.disabled = state.archives.page >= totalPages;
+  }
 
   if (records.length === 0) {
     refs.archiveTable.innerHTML =
@@ -675,7 +797,7 @@ function renderArchiveView() {
     return;
   }
 
-  refs.archiveTable.innerHTML = records
+  refs.archiveTable.innerHTML = pageItems
     .map((item) => {
       const attachments = item.attachments
         .slice(0, 2)
@@ -862,6 +984,7 @@ function renderNotifications() {
     `exchange: ${state.notifications.exchange}`,
     `${state.notifications.total} total announcements`,
     `showing ${state.notifications.items.length}`,
+    `page ${state.notifications.page} of ${state.notifications.totalPages}`,
     `last sync: ${syncedLabel}`
   ];
 
@@ -898,6 +1021,18 @@ function renderNotifications() {
   }
 
   refs.notificationsMeta.textContent = details.join(" | ");
+  if (refs.notificationsPageLabel) {
+    refs.notificationsPageLabel.textContent = `Page ${state.notifications.page} of ${state.notifications.totalPages}`;
+  }
+  if (refs.notificationsPrevBtn) {
+    refs.notificationsPrevBtn.disabled = state.notifications.loading || state.notifications.page <= 1;
+  }
+  if (refs.notificationsNextBtn) {
+    refs.notificationsNextBtn.disabled =
+      state.notifications.loading ||
+      state.notifications.page >= state.notifications.totalPages ||
+      state.notifications.total === 0;
+  }
 
   if (state.notifications.loading) {
     refs.notificationsTable.innerHTML = '<tr><td colspan="6"><div class="empty-state">Loading announcements...</div></td></tr>';
@@ -1351,6 +1486,16 @@ async function fetchNotifications() {
   const symbol = (refs.notificationsSymbolInput?.value ?? "").trim().toUpperCase();
   const limitInput = Number.parseInt(refs.notificationsLimitSelect?.value ?? "50", 10);
   const limit = Number.isFinite(limitInput) ? Math.max(1, Math.min(500, limitInput)) : 50;
+  const page = Math.max(1, Number.isFinite(state.notifications.page) ? Math.floor(state.notifications.page) : 1);
+  const offset = (page - 1) * limit;
+
+  notificationsRequestSeq += 1;
+  const requestSeq = notificationsRequestSeq;
+  if (notificationsAbortController) {
+    notificationsAbortController.abort();
+  }
+  notificationsAbortController = new AbortController();
+  const { signal } = notificationsAbortController;
 
   state.notifications.exchange = exchange;
   state.notifications.symbol = symbol;
@@ -1361,7 +1506,8 @@ async function fetchNotifications() {
 
   const params = new URLSearchParams({
     exchange,
-    limit: String(limit)
+    limit: String(limit),
+    offset: String(offset)
   });
 
   if (symbol) {
@@ -1372,10 +1518,15 @@ async function fetchNotifications() {
   const buildApiResult = (payload, sourceLabel) => {
     const items = Array.isArray(payload?.announcements) ? payload.announcements : [];
     const { syncAt, syncStats } = extractExchangeSync(payload, exchange);
+    const total = Number(payload?.total ?? items.length);
+    const payloadPage = Number(payload?.page ?? page);
+    const totalPages = Number(payload?.totalPages ?? Math.max(1, Math.ceil(total / limit)));
 
     return {
       items,
-      total: Number(payload?.total ?? items.length),
+      total,
+      page: Number.isFinite(payloadPage) ? Math.max(1, Math.floor(payloadPage)) : page,
+      totalPages: Number.isFinite(totalPages) ? Math.max(1, Math.floor(totalPages)) : Math.max(1, Math.ceil(total / limit)),
       lastSyncAt: syncAt,
       lastSyncStats: syncStats,
       source: sourceLabel
@@ -1388,7 +1539,11 @@ async function fetchNotifications() {
   let fallbackError = null;
 
   try {
-    const payload = await apiFetch(notificationsEndpoint);
+    const payload = await apiFetch(notificationsEndpoint, { signal });
+    if (requestSeq !== notificationsRequestSeq) {
+      return;
+    }
+
     apiResult = buildApiResult(
       payload,
       exchange === "NSE+BSE"
@@ -1398,6 +1553,9 @@ async function fetchNotifications() {
           : `backend API (${exchange})`
     );
   } catch (error) {
+    if (error?.name === "AbortError" || requestSeq !== notificationsRequestSeq) {
+      return;
+    }
     apiError = error instanceof Error ? error.message : "Unknown API error";
   }
 
@@ -1407,7 +1565,11 @@ async function fetchNotifications() {
 
     if (currentBase !== fallbackBase) {
       try {
-        const payload = await apiFetchFromBase(notificationsEndpoint, fallbackBase);
+        const payload = await apiFetchFromBase(notificationsEndpoint, fallbackBase, { signal });
+        if (requestSeq !== notificationsRequestSeq) {
+          return;
+        }
+
         apiResult = buildApiResult(
           payload,
           exchange === "NSE+BSE"
@@ -1417,6 +1579,9 @@ async function fetchNotifications() {
               : `core API fallback (${exchange})`
         );
       } catch (error) {
+        if (error?.name === "AbortError" || requestSeq !== notificationsRequestSeq) {
+          return;
+        }
         const fallbackApiError = error instanceof Error ? error.message : "Unknown core API fallback error";
         apiError = apiError ? `${apiError}; ${fallbackApiError}` : fallbackApiError;
       }
@@ -1432,7 +1597,7 @@ async function fetchNotifications() {
           : exchange === "DEDUP"
             ? "./backend/data/dedup_announcements.json"
           : "./backend/data/nse_announcements.json";
-    const fallbackResponse = await fetch(fallbackFile, { cache: "no-store" });
+    const fallbackResponse = await fetch(fallbackFile, { cache: "no-store", signal });
     if (!fallbackResponse.ok) {
       throw new Error(`Fallback file not found (${fallbackResponse.status})`);
     }
@@ -1447,8 +1612,10 @@ async function fetchNotifications() {
     const { syncAt, syncStats } = extractExchangeSync(fallbackPayload, exchange);
 
     fallbackResult = {
-      items: normalizedItems.slice(0, limit),
+      items: normalizedItems.slice(offset, offset + limit),
       total: normalizedItems.length,
+      page,
+      totalPages: Math.max(1, Math.ceil(normalizedItems.length / limit)),
       lastSyncAt: syncAt,
       lastSyncStats: syncStats,
       source:
@@ -1459,26 +1626,50 @@ async function fetchNotifications() {
             : `bundled ${exchange} snapshot`
     };
   } catch (error) {
+    if (error?.name === "AbortError" || requestSeq !== notificationsRequestSeq) {
+      return;
+    }
     fallbackError = error instanceof Error ? error.message : "Unknown fallback error";
   }
 
   const apiLooksReady = apiResult && (apiResult.total > 0 || apiResult.lastSyncAt);
   const chosenResult = apiLooksReady ? apiResult : fallbackResult ?? apiResult;
+  if (requestSeq !== notificationsRequestSeq) {
+    return;
+  }
 
   if (chosenResult) {
+    const totalPages = Math.max(1, Number(chosenResult.totalPages ?? Math.ceil(chosenResult.total / limit)));
+    const nextPage = Math.min(Math.max(Number(chosenResult.page ?? page), 1), totalPages);
+
     state.notifications.items = chosenResult.items;
     state.notifications.total = chosenResult.total;
+    state.notifications.page = nextPage;
+    state.notifications.totalPages = totalPages;
     state.notifications.lastSyncAt = chosenResult.lastSyncAt;
     state.notifications.lastSyncStats = chosenResult.lastSyncStats;
     state.notifications.source = chosenResult.source;
     state.notifications.error = "";
+
+    if (nextPage !== page) {
+      state.notifications.loading = false;
+      renderNotifications();
+      await fetchNotifications();
+      return;
+    }
   } else {
     state.notifications.items = [];
     state.notifications.total = 0;
+    state.notifications.page = 1;
+    state.notifications.totalPages = 1;
     state.notifications.lastSyncAt = null;
     state.notifications.lastSyncStats = null;
     state.notifications.source = "";
     state.notifications.error = apiError || fallbackError || "Unable to load announcements";
+  }
+
+  if (requestSeq !== notificationsRequestSeq) {
+    return;
   }
 
   state.notifications.loading = false;
@@ -1502,6 +1693,12 @@ function getVisibleArchives() {
   return records;
 }
 
+function getArchiveTotalPages(totalRecords = null) {
+  const total = totalRecords === null ? getVisibleArchives().length : Number(totalRecords);
+  const pageSize = Math.max(1, Number.isFinite(state.archives.pageSize) ? Math.floor(state.archives.pageSize) : 20);
+  return Math.max(1, Math.ceil(Math.max(0, total) / pageSize));
+}
+
 async function apiFetch(endpoint, options = {}) {
   return apiFetchFromBase(endpoint, getApiBase(), options, true);
 }
@@ -1512,7 +1709,8 @@ async function apiFetchFromBase(endpoint, apiBase, options = {}, clearAuthOnUnau
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {})
-    }
+    },
+    signal: options.signal
   };
 
   if (options.body !== undefined) {
@@ -1639,6 +1837,21 @@ function groupBy(items, field) {
     acc[key].push(item);
     return acc;
   }, {});
+}
+
+function debounce(callback, waitMs = 200) {
+  let timeoutId = null;
+
+  return (...args) => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+
+    timeoutId = setTimeout(() => {
+      timeoutId = null;
+      callback(...args);
+    }, waitMs);
+  };
 }
 
 function formatTime(value) {

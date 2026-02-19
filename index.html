@@ -28,11 +28,15 @@
           <span id="pipeline-status">Pipeline status: using frontend mock data</span>
         </div>
 
-        <nav class="view-tabs" aria-label="Brokerage Email Views">
+        <nav class="section-tabs" aria-label="App Sections">
+          <button class="section-tab active" data-section="brokerage">Brokerage Email</button>
+          <button class="section-tab" data-section="notifications">Notifications</button>
+        </nav>
+
+        <nav id="brokerage-view-tabs" class="view-tabs" aria-label="Brokerage Email Views">
           <button class="tab active" data-view="dashboard">Dashboard</button>
           <button class="tab" data-view="archive">Archive</button>
           <button class="tab" data-view="company">Company View</button>
-          <button class="tab" data-view="notifications">Notifications</button>
           <button class="tab" data-view="settings">Settings</button>
           <button class="tab" data-view="digest">Digest Preview</button>
         </nav>
@@ -101,6 +105,11 @@
                   </thead>
                   <tbody id="archive-table"></tbody>
                 </table>
+              </div>
+              <div class="table-pager">
+                <button id="archive-prev-btn" class="btn" type="button">Previous</button>
+                <span id="archive-page-label" class="page-label">Page 1 of 1</span>
+                <button id="archive-next-btn" class="btn" type="button">Next</button>
               </div>
             </div>
           </article>
@@ -177,6 +186,11 @@
                   </thead>
                   <tbody id="notifications-table"></tbody>
                 </table>
+              </div>
+              <div class="table-pager">
+                <button id="notifications-prev-btn" class="btn" type="button">Previous</button>
+                <span id="notifications-page-label" class="page-label">Page 1 of 1</span>
+                <button id="notifications-next-btn" class="btn" type="button">Next</button>
               </div>
             </div>
           </article>
@@ -265,6 +279,6 @@
       </main>
     </div>
 
-    <script src="./app.js?v=20260219-1445" type="module"></script>
+    <script src="./app.js?v=20260219-1610" type="module"></script>
   </body>
 </html>

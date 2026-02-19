@@ -1439,6 +1439,8 @@ async function handleGetAnnouncements(req, res, requestUrl) {
 
   const requestedLimit = Number.parseInt(requestUrl.searchParams.get("limit") ?? "100", 10);
   const limit = Math.min(Math.max(normalizePositiveInt(requestedLimit, 100), 1), 500);
+  const requestedOffset = Number.parseInt(requestUrl.searchParams.get("offset") ?? "0", 10);
+  const offset = Math.max(0, Number.isFinite(requestedOffset) ? Math.floor(requestedOffset) : 0);
   const exchangeQuery = String(requestUrl.searchParams.get("exchange") ?? "NSE")
     .trim()
     .replace(/\s+/g, "")
@@ -1505,9 +1507,12 @@ async function handleGetAnnouncements(req, res, requestUrl) {
 
   sendJson(req, res, 200, {
     exchange: selectedExchange,
-    announcements: filtered.slice(0, limit),
+    announcements: filtered.slice(offset, offset + limit),
     total: filtered.length,
     limit,
+    offset,
+    page: Math.floor(offset / limit) + 1,
+    totalPages: Math.max(1, Math.ceil(filtered.length / limit)),
     lastSyncAt,
     lastSyncStats,
     lastNseSyncAt: stores.NSE.lastSyncAt,
