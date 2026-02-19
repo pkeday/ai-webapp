@@ -39,6 +39,21 @@ Production setup in this project:
 - `DEDUP_MAX_STORED`: Max deduped announcements retained (default: `10000`).
 - `PDF_HASH_TIMEOUT_MS`: Timeout used when downloading PDFs for hashing (default: `20000`).
 - `PDF_HASH_CONCURRENCY`: Parallel PDF hash workers during dedup rebuild (default: `4`).
+- `AI_CLASSIFIER_ENABLED`: Gate for AI classification (`true` to enable; default: `false`).
+- `AI_CRITERIA_VERSION`: Prompt/version tag used for idempotent reclassification (default: `v1`).
+- `AI_MAX_ITEMS_PER_CRON`: Max dedup announcements sent to models per cron run (default: `120`).
+- `AI_CLASSIFICATION_CONCURRENCY`: Parallel AI classification workers (default: `2`).
+- `AI_PRIMARY_MAX_PAGES`: Pages sent in stage-1 classification (default: `4`).
+- `AI_ESCALATION_MAX_PAGES`: Pages sent in stage-2 escalation (default: `12`).
+- `AI_ESCALATION_CONFIDENCE_THRESHOLD`: Escalation threshold (default: `0.8`).
+- `AI_MIN_READABLE_CHARS`: Min extracted text chars to treat PDF as machine-readable (default: `700`).
+- `AI_FAILURE_RETRY_HOURS`: Retry cooldown for failed classifications (default: `24`).
+- `OPENAI_API_KEY`: OpenAI API key for machine-readable announcements.
+- `AI_OPENAI_STAGE1_MODEL`: Low-cost OpenAI stage-1 model (default: `gpt-5-nano`).
+- `AI_OPENAI_STAGE2_MODEL`: Escalation OpenAI model (default: `gpt-5-mini`).
+- `GEMINI_API_KEY`: Gemini API key for scanned/image-heavy announcements.
+- `AI_GEMINI_STAGE1_MODEL`: Low-cost Gemini stage-1 model (default: `gemini-2.5-flash-lite`).
+- `AI_GEMINI_STAGE2_MODEL`: Escalation Gemini model (default: `gemini-2.5-flash`).
 
 ## API endpoints
 
@@ -59,4 +74,5 @@ Production setup in this project:
 - New records are deduplicated per exchange and stored in separate files (`NSE_STORAGE_FILE`, `BSE_STORAGE_FILE`).
 - A separate combined union table (`COMBINED_STORAGE_FILE`) is rebuilt as `exchange=NSE+BSE` (no dedup).
 - A separate dedup table (`DEDUP_STORAGE_FILE`) is rebuilt using `ISIN + PDF hash` and served with `exchange=DEDUP`.
+- If enabled, AI classification runs after dedup in the same cron run and stores per-announcement labels in `data/announcement_ai_labels.json`.
 - Notifications data is served via `GET /api/notifications/announcements`.
