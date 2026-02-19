@@ -36,6 +36,9 @@ const combinedStoragePath = resolve(process.cwd(), process.env.COMBINED_STORAGE_
 const combinedMaxStored = Number.parseInt(process.env.COMBINED_MAX_STORED ?? "10000", 10);
 const dedupStoragePath = resolve(process.cwd(), process.env.DEDUP_STORAGE_FILE ?? "data/dedup_announcements.json");
 const dedupMaxStored = Number.parseInt(process.env.DEDUP_MAX_STORED ?? "10000", 10);
+const dedupIncrementalLookbackHours = Number.parseInt(process.env.DEDUP_INCREMENTAL_LOOKBACK_HOURS ?? "48", 10);
+const dedupIncrementalMinCandidates = Number.parseInt(process.env.DEDUP_INCREMENTAL_MIN_CANDIDATES ?? "400", 10);
+const dedupIncrementalMaxCandidates = Number.parseInt(process.env.DEDUP_INCREMENTAL_MAX_CANDIDATES ?? "2500", 10);
 const pdfHashTimeoutMs = Number.parseInt(process.env.PDF_HASH_TIMEOUT_MS ?? "20000", 10);
 const pdfHashConcurrency = Number.parseInt(process.env.PDF_HASH_CONCURRENCY ?? "4", 10);
 
@@ -378,6 +381,39 @@ function buildDedupSourceFingerprint() {
   return buildStoreFingerprint("COMBINED");
 }
 
+function selectDedupSourceCandidates() {
+  const source = Array.isArray(stores.COMBINED.announcements) ? stores.COMBINED.announcements : [];
+  const safeMinCandidates = normalizePositiveInt(dedupIncrementalMinCandidates, 400);
+  const safeMaxCandidates = Math.max(safeMinCandidates, normalizePositiveInt(dedupIncrementalMaxCandidates, 2500));
+  const safeLookbackHours = normalizePositiveInt(dedupIncrementalLookbackHours, 48);
+  const cutoffMs = Date.now() - safeLookbackHours * 60 * 60 * 1000;
+  const candidates = [];
+
+  for (const item of source) {
+    const storedSortMs = Number(item?.sortTimestampMs ?? 0);
+    const timestampMs = parseTimestampToMillis(item?.timestamp) ?? 0;
+    const insertedAtMs = parseTimestampToMillis(item?.insertedAt) ?? 0;
+    const effectiveTimestampMs = Math.max(0, storedSortMs, timestampMs, insertedAtMs);
+    const includeByLookback = effectiveTimestampMs >= cutoffMs;
+
+    if (candidates.length < safeMinCandidates || includeByLookback) {
+      candidates.push(item);
+    } else {
+      break;
+    }
+
+    if (candidates.length >= safeMaxCandidates) {
+      break;
+    }
+  }
+
+  if (candidates.length === 0) {
+    return source.slice(0, safeMaxCandidates);
+  }
+
+  return candidates;
+}
+
 function buildNseListingByIsin() {
   const nseListingByIsin = new Map();
 
@@ -664,8 +700,9 @@ function buildCombinedAnnouncements() {
   };
 }
 
-async function buildDedupAnnouncements() {
-  const sourceItems = [...stores.COMBINED.announcements];
+async function buildDedupAnnouncements(options = {}) {
+  const sourceItems = Array.isArray(options?.sourceItems) ? [...options.sourceItems] : [...stores.COMBINED.announcements];
+  const baseAnnouncements = Array.isArray(options?.baseAnnouncements) ? options.baseAnnouncements : [];
   const nseListingByIsin = buildNseListingByIsin();
   const pdfHashCache = new Map();
   const knownPdfHashByUrl = buildKnownPdfHashByUrl();
@@ -701,6 +738,97 @@ async function buildDedupAnnouncements() {
   let missingIsinCount = 0;
   let withPdfHashCount = 0;
   let missingPdfHashCount = 0;
+  const dedupMap = new Map();
+  const dedupAnnouncements = [];
+
+  for (const existingItem of baseAnnouncements) {
+    const baseKey = normalizeText(
+      existingItem?.dedupAnnouncementKey ?? existingItem?.mergedAnnouncementKey ?? existingItem?.announcementKey
+    );
+    if (!baseKey || dedupMap.has(baseKey)) {
+      continue;
+    }
+
+    const rawFallbackExchange = getExchangeValue(existingItem?.primaryExchange ?? existingItem?.exchange ?? "NSE");
+    const fallbackExchange = rawFallbackExchange === "BSE" ? "BSE" : "NSE";
+    const normalizedSourceAnnouncements = dedupeSourceAnnouncements(existingItem?.sourceAnnouncements, fallbackExchange);
+    const fallbackSourceAnnouncement = normalizeSourceAnnouncement(
+      {
+        sourceKey: normalizeText(existingItem?.sourceKey ?? baseKey),
+        exchange: fallbackExchange,
+        announcementKey: normalizeText(existingItem?.announcementKey ?? baseKey),
+        timestamp: normalizeText(existingItem?.timestamp),
+        symbol: normalizeText(existingItem?.symbol),
+        company: normalizeText(existingItem?.company),
+        type: normalizeText(existingItem?.type),
+        attachmentUrl: normalizeText(existingItem?.attachment_url),
+        isin: normalizeIsin(existingItem?.isin)
+      },
+      fallbackExchange
+    );
+    const sourceAnnouncements =
+      normalizedSourceAnnouncements.length > 0 ? normalizedSourceAnnouncements : [fallbackSourceAnnouncement];
+    const baseExchangeCandidates = [
+      ...(Array.isArray(existingItem?.exchanges) ? existingItem.exchanges : []),
+      existingItem?.exchange,
+      ...sourceAnnouncements.map((sourceAnnouncement) => sourceAnnouncement.exchange)
+    ];
+    const exchanges = mergeSortedUnique(
+      baseExchangeCandidates
+        .map((candidate) => getExchangeValue(candidate))
+        .flatMap((exchange) => {
+          if (exchange === "NSE+BSE" || exchange === "BSE+NSE" || exchange === "COMBINED") {
+            return ["NSE", "BSE"];
+          }
+
+          return exchange === "NSE" || exchange === "BSE" ? [exchange] : [];
+        })
+    );
+    const isin = normalizeIsin(existingItem?.isin);
+    const timestamp = normalizeText(existingItem?.timestamp ?? "-") || "-";
+    const type = normalizeText(existingItem?.type ?? "-") || "-";
+    const symbol = normalizeText(existingItem?.symbol ?? "-") || "-";
+    const company = normalizeText(existingItem?.company ?? "-") || "-";
+    const attachmentUrl = normalizeText(existingItem?.attachment_url) || null;
+    const sortTimestampMs =
+      parseTimestampToMillis(timestamp) ??
+      parseTimestampToMillis(existingItem?.insertedAt) ??
+      Number(existingItem?.sortTimestampMs ?? 0);
+    const normalizedRecord = {
+      ...existingItem,
+      exchange: exchanges.length > 1 ? "NSE+BSE" : exchanges[0] ?? fallbackExchange,
+      exchanges: exchanges.length > 0 ? exchanges : [fallbackExchange],
+      mergedFromCount: sourceAnnouncements.length,
+      dedupAnnouncementKey: baseKey,
+      mergedAnnouncementKey: baseKey,
+      announcementKey: baseKey,
+      dedupeStrategy:
+        normalizeText(existingItem?.dedupeStrategy) || (isin && normalizeText(existingItem?.pdf_hash) ? "isin+pdf-hash" : "source-key-fallback"),
+      isin,
+      pdf_hash: normalizeText(existingItem?.pdf_hash) || null,
+      timestamp,
+      symbol,
+      company,
+      type,
+      attachment_url: attachmentUrl,
+      sourceAnnouncements,
+      insertedAt: existingItem?.insertedAt ?? new Date().toISOString(),
+      sortTimestampMs: Number.isFinite(sortTimestampMs) ? sortTimestampMs : 0,
+      primaryExchange: fallbackExchange
+    };
+
+    const nseListing = normalizedRecord.isin ? nseListingByIsin.get(normalizedRecord.isin) ?? null : null;
+    if (nseListing) {
+      normalizedRecord.symbol = nseListing.symbol || normalizedRecord.symbol;
+      normalizedRecord.company = nseListing.company || normalizedRecord.company;
+      normalizedRecord.hasNseListing = true;
+    } else {
+      normalizedRecord.hasNseListing = Boolean(existingItem?.hasNseListing);
+    }
+
+    dedupMap.set(baseKey, normalizedRecord);
+    dedupAnnouncements.push(normalizedRecord);
+  }
 
   const normalizedSourceItems = await mapWithConcurrency(sourceItems, pdfHashConcurrency, async (item, index) => {
     const exchange = getExchangeValue(item?.exchange ?? "NSE");
@@ -761,8 +889,6 @@ async function buildDedupAnnouncements() {
     };
   });
 
-  const dedupMap = new Map();
-  const dedupAnnouncements = [];
   let sourceDedupedCount = 0;
 
   for (const item of normalizedSourceItems) {
@@ -843,6 +969,7 @@ async function buildDedupAnnouncements() {
     announcements: dedupAnnouncements,
     stats: {
       inputCount: sourceItems.length,
+      baselineCount: baseAnnouncements.length,
       dedupCount: sourceDedupedCount,
       mergedRecordCount,
       dedupedCount: dedupAnnouncements.length,
@@ -987,17 +1114,31 @@ async function refreshDedupAnnouncements(trigger = "manual", force = false) {
       };
     }
 
-    const result = await buildDedupAnnouncements();
+    const incrementalMode = !force && Array.isArray(store.announcements) && store.announcements.length > 0;
+    const sourceCandidates = incrementalMode ? selectDedupSourceCandidates() : [...stores.COMBINED.announcements];
+    const result = await buildDedupAnnouncements({
+      sourceItems: sourceCandidates,
+      baseAnnouncements: incrementalMode ? store.announcements : []
+    });
     store.announcements = result.announcements;
     store.keys = new Set(store.announcements.map((item) => getAnnouncementKey("DEDUP", item)).filter(Boolean));
 
     const trimmedCount = trimStore("DEDUP");
+    const safeLookbackHours = normalizePositiveInt(dedupIncrementalLookbackHours, 48);
+    const safeMinCandidates = normalizePositiveInt(dedupIncrementalMinCandidates, 400);
+    const safeMaxCandidates = Math.max(safeMinCandidates, normalizePositiveInt(dedupIncrementalMaxCandidates, 2500));
     store.lastSyncAt = new Date().toISOString();
     store.lastSyncStats = {
       exchange: "DEDUP",
       trigger,
       dedupeRule: "ISIN + PDF hash",
+      mode: incrementalMode ? "incremental" : "full",
+      incrementalLookbackHours: safeLookbackHours,
+      incrementalMinCandidates: safeMinCandidates,
+      incrementalMaxCandidates: safeMaxCandidates,
+      candidateSourceCount: sourceCandidates.length,
       inputCount: result.stats.inputCount,
+      baselineCount: result.stats.baselineCount,
       dedupCount: result.stats.dedupCount,
       mergedRecordCount: result.stats.mergedRecordCount,
       dedupedCount: result.stats.dedupedCount,
@@ -1467,28 +1608,6 @@ async function handleGetAnnouncements(req, res, requestUrl) {
           ? "NSE+BSE"
           : "NSE";
 
-  if (selectedExchange === "NSE+BSE") {
-    if (stores.COMBINED.announcements.length === 0) {
-      await refreshCombinedAnnouncements("api-request");
-    } else {
-      void refreshCombinedAnnouncements("api-request").catch((error) => {
-        log("Background combined refresh failed", {
-          message: error instanceof Error ? error.message : "Unknown combined refresh error"
-        });
-      });
-    }
-  } else if (selectedExchange === "DEDUP") {
-    if (stores.DEDUP.announcements.length === 0) {
-      await refreshDedupAnnouncements("api-request");
-    } else {
-      void refreshDedupAnnouncements("api-request").catch((error) => {
-        log("Background dedup refresh failed", {
-          message: error instanceof Error ? error.message : "Unknown dedup refresh error"
-        });
-      });
-    }
-  }
-
   const sourceAnnouncements =
     selectedExchange === "ALL"
       ? [...stores.NSE.announcements, ...stores.BSE.announcements]
@@ -1571,12 +1690,45 @@ async function handleCronRun(req, res) {
     syncNseAnnouncements(trigger),
     syncBseAnnouncements(trigger)
   ]);
-  const combinedResult = await refreshCombinedAnnouncements(trigger)
-    .then((value) => ({ status: "fulfilled", value }))
-    .catch((reason) => ({ status: "rejected", reason }));
-  const dedupResult = await refreshDedupAnnouncements(trigger)
-    .then((value) => ({ status: "fulfilled", value }))
-    .catch((reason) => ({ status: "rejected", reason }));
+  const nseNewCount = nseResult.status === "fulfilled" ? Number(nseResult.value?.newCount ?? 0) : 0;
+  const bseNewCount = bseResult.status === "fulfilled" ? Number(bseResult.value?.newCount ?? 0) : 0;
+  const hasNewSourceRows = nseNewCount > 0 || bseNewCount > 0;
+  const shouldRefreshDerived =
+    hasNewSourceRows || stores.COMBINED.announcements.length === 0 || stores.DEDUP.announcements.length === 0;
+
+  const combinedResult = shouldRefreshDerived
+    ? await refreshCombinedAnnouncements(trigger)
+        .then((value) => ({ status: "fulfilled", value }))
+        .catch((reason) => ({ status: "rejected", reason }))
+    : {
+        status: "fulfilled",
+        value: {
+          exchange: "COMBINED",
+          trigger,
+          dedupeRule: "None (NSE+BSE raw union)",
+          skipped: true,
+          reason: "no-new-source-data",
+          totalStored: stores.COMBINED.announcements.length,
+          syncedAt: stores.COMBINED.lastSyncAt
+        }
+      };
+  const dedupResult = shouldRefreshDerived
+    ? await refreshDedupAnnouncements(trigger)
+        .then((value) => ({ status: "fulfilled", value }))
+        .catch((reason) => ({ status: "rejected", reason }))
+    : {
+        status: "fulfilled",
+        value: {
+          exchange: "DEDUP",
+          trigger,
+          dedupeRule: "ISIN + PDF hash",
+          skipped: true,
+          reason: "no-new-source-data",
+          sourceCombinedSyncAt: stores.COMBINED.lastSyncAt ?? null,
+          totalStored: stores.DEDUP.announcements.length,
+          syncedAt: stores.DEDUP.lastSyncAt
+        }
+      };
 
   const responsePayload = {
     ok:
@@ -1634,17 +1786,6 @@ async function handleWorkerHeartbeat(req, res) {
 
 async function handleStatus(req, res) {
   await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP")]);
-  // Keep status endpoint responsive; refreshes can run in the background.
-  void refreshCombinedAnnouncements("status").catch((error) => {
-    log("Background combined status refresh failed", {
-      message: error instanceof Error ? error.message : "Unknown combined status refresh error"
-    });
-  });
-  void refreshDedupAnnouncements("status").catch((error) => {
-    log("Background dedup status refresh failed", {
-      message: error instanceof Error ? error.message : "Unknown dedup status refresh error"
-    });
-  });
 
   sendJson(req, res, 200, {
     service: appName,
@@ -1741,7 +1882,6 @@ const server = createServer(async (req, res) => {
 });
 
 Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP")])
-  .then(() => refreshCombinedAnnouncements("startup"))
   .catch((error) => {
     const message = error instanceof Error ? error.message : "Unknown error";
     log("Announcement stores warm-up failed", { message });
