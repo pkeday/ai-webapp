@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
 };
 
 const defaultApiBase = "https://pkeday-ai-webapp-brokerage-api.onrender.com";
+const notificationsApiBaseFallback = "https://pkeday-ai-webapp-api.onrender.com";
 
 const defaultDictionary = [
   {
@@ -1305,25 +1306,50 @@ async function fetchNotifications() {
     params.set("symbol", symbol);
   }
 
+  const notificationsEndpoint = `/api/notifications/announcements?${params.toString()}`;
+  const buildApiResult = (payload, sourceLabel) => {
+    const items = Array.isArray(payload?.announcements) ? payload.announcements : [];
+    const { syncAt, syncStats } = extractExchangeSync(payload, exchange);
+
+    return {
+      items,
+      total: Number(payload?.total ?? items.length),
+      lastSyncAt: syncAt,
+      lastSyncStats: syncStats,
+      source: sourceLabel
+    };
+  };
+
   let apiResult = null;
   let apiError = null;
   let fallbackResult = null;
   let fallbackError = null;
 
   try {
-    const payload = await apiFetch(`/api/notifications/announcements?${params.toString()}`);
-    const items = Array.isArray(payload?.announcements) ? payload.announcements : [];
-    const { syncAt, syncStats } = extractExchangeSync(payload, exchange);
-
-    apiResult = {
-      items,
-      total: Number(payload?.total ?? items.length),
-      lastSyncAt: syncAt,
-      lastSyncStats: syncStats,
-      source: exchange === "BSE+NSE" ? "backend API (BSE+NSE deduped)" : `backend API (${exchange})`
-    };
+    const payload = await apiFetch(notificationsEndpoint);
+    apiResult = buildApiResult(payload, exchange === "BSE+NSE" ? "backend API (BSE+NSE deduped)" : `backend API (${exchange})`);
   } catch (error) {
     apiError = error instanceof Error ? error.message : "Unknown API error";
+  }
+
+  if (!apiResult) {
+    const currentBase = getApiBase();
+    const fallbackBase = notificationsApiBaseFallback.replace(/\/$/, "");
+
+    if (currentBase !== fallbackBase) {
+      try {
+        const payload = await apiFetchFromBase(notificationsEndpoint, fallbackBase);
+        apiResult = buildApiResult(
+          payload,
+          exchange === "BSE+NSE"
+            ? "core API fallback (BSE+NSE deduped)"
+            : `core API fallback (${exchange})`
+        );
+      } catch (error) {
+        const fallbackApiError = error instanceof Error ? error.message : "Unknown core API fallback error";
+        apiError = apiError ? `${apiError}; ${fallbackApiError}` : fallbackApiError;
+      }
+    }
   }
 
   try {
@@ -1399,6 +1425,10 @@ function getVisibleArchives() {
 }
 
 async function apiFetch(endpoint, options = {}) {
+  return apiFetchFromBase(endpoint, getApiBase(), options, true);
+}
+
+async function apiFetchFromBase(endpoint, apiBase, options = {}, clearAuthOnUnauthorized = false) {
   const request = {
     method: options.method || "GET",
     headers: {
@@ -1415,11 +1445,12 @@ async function apiFetch(endpoint, options = {}) {
     request.headers.Authorization = `Bearer ${state.auth.token}`;
   }
 
-  const response = await fetch(`${getApiBase()}${endpoint}`, request);
+  const normalizedBase = String(apiBase || "").replace(/\/$/, "");
+  const response = await fetch(`${normalizedBase}${endpoint}`, request);
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    if (response.status === 401) {
+    if (clearAuthOnUnauthorized && response.status === 401) {
       clearAuthToken();
       renderAuthUi();
     }
