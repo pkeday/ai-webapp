@@ -50,7 +50,7 @@ const aiSuggestionsStoragePath = resolve(
   process.cwd(),
   process.env.AI_SUGGESTIONS_STORAGE_FILE ?? "data/announcement_ai_suggestions.json"
 );
-const aiCriteriaVersion = process.env.AI_CRITERIA_VERSION ?? "v1";
+const aiCriteriaVersion = process.env.AI_CRITERIA_VERSION ?? "v2";
 const aiClassifierEnabled = normalizeText(process.env.AI_CLASSIFIER_ENABLED ?? "false").toLowerCase() === "true";
 const aiPromptLearningMinExamples = Number.parseInt(process.env.AI_PROMPT_LEARNING_MIN_EXAMPLES ?? "2", 10);
 const aiPromptLearningMaxRules = Number.parseInt(process.env.AI_PROMPT_LEARNING_MAX_RULES ?? "8", 10);
