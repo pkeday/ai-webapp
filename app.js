@@ -849,7 +849,8 @@ function renderNotifications() {
   }
 
   if (refs.notificationsExchangeSelect) {
-    refs.notificationsExchangeSelect.value = state.notifications.exchange;
+    const normalizedExchange = state.notifications.exchange === "BSE+NSE" ? "NSE+BSE" : state.notifications.exchange;
+    refs.notificationsExchangeSelect.value = normalizedExchange;
   }
 
   const stats = state.notifications.lastSyncStats;
@@ -872,13 +873,27 @@ function renderNotifications() {
     details.push(`range: ${stats.fromDate} to ${stats.toDate}`);
   }
 
-  if (state.notifications.exchange === "BSE+NSE" && stats) {
+  if (state.notifications.exchange === "NSE+BSE" && stats) {
+    if (Number.isFinite(stats.inputCount)) {
+      details.push(`source records: ${stats.inputCount}`);
+    }
+
+    if (Number.isFinite(stats.sourceDedupedCount)) {
+      details.push(`source duplicates removed: ${stats.sourceDedupedCount}`);
+    }
+  }
+
+  if (state.notifications.exchange === "DEDUP" && stats) {
     if (Number.isFinite(stats.inputCount)) {
       details.push(`deduped: ${state.notifications.total} unique from ${stats.inputCount} source records`);
     }
 
-    if (Number.isFinite(stats.crossExchangeMergedCount)) {
-      details.push(`cross-exchange merges: ${stats.crossExchangeMergedCount}`);
+    if (Number.isFinite(stats.dedupCount)) {
+      details.push(`duplicates removed: ${stats.dedupCount}`);
+    }
+
+    if (Number.isFinite(stats.withPdfHashCount)) {
+      details.push(`hashed: ${stats.withPdfHashCount}`);
     }
   }
 
@@ -906,7 +921,13 @@ function renderNotifications() {
     .map((item) => {
       const selectedExchange = String(state.notifications.exchange ?? "NSE").toUpperCase();
       const exchange = String(item.exchange ?? selectedExchange).toUpperCase();
-      const combinedView = selectedExchange === "BSE+NSE" || exchange === "BSE+NSE" || exchange === "COMBINED";
+      const combinedView =
+        selectedExchange === "NSE+BSE" ||
+        selectedExchange === "DEDUP" ||
+        exchange === "NSE+BSE" ||
+        exchange === "BSE+NSE" ||
+        exchange === "COMBINED" ||
+        exchange === "DEDUP";
 
       let exchangeLabel = exchange;
       let timestamp = "-";
@@ -919,7 +940,27 @@ function renderNotifications() {
         const sourceExchanges = Array.isArray(item.exchanges)
           ? item.exchanges.map((value) => String(value).toUpperCase()).filter(Boolean)
           : [];
-        exchangeLabel = sourceExchanges.length > 0 ? sourceExchanges.join("+") : exchange === "COMBINED" ? "BSE+NSE" : exchange;
+        const orderedExchanges = [...sourceExchanges].sort((left, right) => {
+          if (left === right) {
+            return 0;
+          }
+          if (left === "NSE") {
+            return -1;
+          }
+          if (right === "NSE") {
+            return 1;
+          }
+          return left.localeCompare(right);
+        });
+        exchangeLabel =
+          orderedExchanges.length > 0
+            ? orderedExchanges.join("+")
+            : exchange === "COMBINED"
+              ? "NSE+BSE"
+              : exchange;
+        if (exchangeLabel === "BSE+NSE") {
+          exchangeLabel = "NSE+BSE";
+        }
         timestamp = item.timestamp || "-";
         symbol = item.symbol || "-";
         company = item.company || "-";
@@ -949,10 +990,11 @@ function renderNotifications() {
       const attachment = attachmentUrl
         ? `<a class="link-btn" href="${escapeAttribute(attachmentUrl)}" target="_blank" rel="noopener">Open</a>`
         : "-";
+      const timestampLabel = formatNotificationTimestamp(timestamp);
 
       return `
         <tr>
-          <td>${escapeHtml(timestamp)}</td>
+          <td>${escapeHtml(timestampLabel)}</td>
           <td>${escapeHtml(exchangeLabel)}</td>
           <td>${escapeHtml(symbol)}</td>
           <td>${escapeHtml(company)}</td>
@@ -1205,15 +1247,28 @@ async function fetchArchives() {
 }
 
 function extractExchangeSync(payload, exchange) {
-  const normalizedExchange = exchange === "BSE+NSE" || exchange === "COMBINED" ? "COMBINED" : exchange;
+  const normalizedExchange =
+    exchange === "NSE+BSE" || exchange === "BSE+NSE" || exchange === "COMBINED"
+      ? "COMBINED"
+      : exchange === "DEDUP"
+        ? "DEDUP"
+        : exchange;
   const fallbackAtKey =
-    normalizedExchange === "BSE" ? "lastBseSyncAt" : normalizedExchange === "COMBINED" ? "lastCombinedSyncAt" : "lastNseSyncAt";
+    normalizedExchange === "BSE"
+      ? "lastBseSyncAt"
+      : normalizedExchange === "COMBINED"
+        ? "lastCombinedSyncAt"
+        : normalizedExchange === "DEDUP"
+          ? "lastDedupSyncAt"
+          : "lastNseSyncAt";
   const fallbackStatsKey =
     normalizedExchange === "BSE"
       ? "lastBseSyncStats"
       : normalizedExchange === "COMBINED"
         ? "lastCombinedSyncStats"
-        : "lastNseSyncStats";
+        : normalizedExchange === "DEDUP"
+          ? "lastDedupSyncStats"
+          : "lastNseSyncStats";
   let syncAt = null;
   let syncStats = null;
 
@@ -1253,7 +1308,7 @@ function fallbackSymbolMatch(item, exchange, symbol) {
   }
 
   const query = symbol.toUpperCase();
-  if (exchange === "BSE+NSE" || exchange === "COMBINED") {
+  if (exchange === "NSE+BSE" || exchange === "BSE+NSE" || exchange === "COMBINED" || exchange === "DEDUP") {
     const combinedSymbol = String(item?.symbol ?? "").toUpperCase();
     const combinedCompany = String(item?.company ?? "").toUpperCase();
     const combinedIsin = String(item?.isin ?? "").toUpperCase();
@@ -1285,7 +1340,14 @@ function fallbackSymbolMatch(item, exchange, symbol) {
 
 async function fetchNotifications() {
   const exchangeInput = String(refs.notificationsExchangeSelect?.value ?? "NSE").trim().toUpperCase();
-  const exchange = exchangeInput === "BSE" ? "BSE" : exchangeInput === "BSE+NSE" ? "BSE+NSE" : "NSE";
+  const exchange =
+    exchangeInput === "BSE"
+      ? "BSE"
+      : exchangeInput === "DEDUP"
+        ? "DEDUP"
+        : exchangeInput === "NSE+BSE" || exchangeInput === "BSE+NSE" || exchangeInput === "COMBINED"
+          ? "NSE+BSE"
+          : "NSE";
   const symbol = (refs.notificationsSymbolInput?.value ?? "").trim().toUpperCase();
   const limitInput = Number.parseInt(refs.notificationsLimitSelect?.value ?? "50", 10);
   const limit = Number.isFinite(limitInput) ? Math.max(1, Math.min(500, limitInput)) : 50;
@@ -1327,7 +1389,14 @@ async function fetchNotifications() {
 
   try {
     const payload = await apiFetch(notificationsEndpoint);
-    apiResult = buildApiResult(payload, exchange === "BSE+NSE" ? "backend API (BSE+NSE deduped)" : `backend API (${exchange})`);
+    apiResult = buildApiResult(
+      payload,
+      exchange === "NSE+BSE"
+        ? "backend API (NSE+BSE no dedup)"
+        : exchange === "DEDUP"
+          ? "backend API (Dedup: ISIN + PDF hash)"
+          : `backend API (${exchange})`
+    );
   } catch (error) {
     apiError = error instanceof Error ? error.message : "Unknown API error";
   }
@@ -1341,9 +1410,11 @@ async function fetchNotifications() {
         const payload = await apiFetchFromBase(notificationsEndpoint, fallbackBase);
         apiResult = buildApiResult(
           payload,
-          exchange === "BSE+NSE"
-            ? "core API fallback (BSE+NSE deduped)"
-            : `core API fallback (${exchange})`
+          exchange === "NSE+BSE"
+            ? "core API fallback (NSE+BSE no dedup)"
+            : exchange === "DEDUP"
+              ? "core API fallback (Dedup: ISIN + PDF hash)"
+              : `core API fallback (${exchange})`
         );
       } catch (error) {
         const fallbackApiError = error instanceof Error ? error.message : "Unknown core API fallback error";
@@ -1356,8 +1427,10 @@ async function fetchNotifications() {
     const fallbackFile =
       exchange === "BSE"
         ? "./backend/data/bse_announcements.json"
-        : exchange === "BSE+NSE"
+        : exchange === "NSE+BSE"
           ? "./backend/data/combined_announcements.json"
+          : exchange === "DEDUP"
+            ? "./backend/data/dedup_announcements.json"
           : "./backend/data/nse_announcements.json";
     const fallbackResponse = await fetch(fallbackFile, { cache: "no-store" });
     if (!fallbackResponse.ok) {
@@ -1378,7 +1451,12 @@ async function fetchNotifications() {
       total: normalizedItems.length,
       lastSyncAt: syncAt,
       lastSyncStats: syncStats,
-      source: exchange === "BSE+NSE" ? "bundled BSE+NSE deduped snapshot" : `bundled ${exchange} snapshot`
+      source:
+        exchange === "NSE+BSE"
+          ? "bundled NSE+BSE snapshot (no dedup)"
+          : exchange === "DEDUP"
+            ? "bundled Dedup snapshot"
+            : `bundled ${exchange} snapshot`
     };
   } catch (error) {
     fallbackError = error instanceof Error ? error.message : "Unknown fallback error";
@@ -1569,6 +1647,40 @@ function formatTime(value) {
 
 function formatShortDate(value) {
   return new Date(value).toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function parseNotificationTimestamp(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized || normalized === "-") {
+    return null;
+  }
+
+  const parsedMillis = Date.parse(normalized);
+  if (Number.isFinite(parsedMillis)) {
+    return new Date(parsedMillis);
+  }
+
+  const compactDateTime = normalized.match(/^(\d{2})(\d{2})(\d{4})(\d{2})(\d{2})(\d{2})$/);
+  if (compactDateTime) {
+    const [, day, month, year, hour, minute, second] = compactDateTime;
+    return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+  }
+
+  return null;
+}
+
+function formatNotificationTimestamp(value) {
+  const parsed = parseNotificationTimestamp(value);
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    const fallback = String(value ?? "").trim();
+    return fallback || "-";
+  }
+
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const month = parsed.toLocaleString("en-US", { month: "short" });
+  const hour = String(parsed.getHours()).padStart(2, "0");
+  const minute = String(parsed.getMinutes()).padStart(2, "0");
+  return `${day}-${month} ${hour}:${minute}`;
 }
 
 function tagClassForType(type) {

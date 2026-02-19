@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { fetchNseAnnouncements, deriveAnnouncementKey, getDefaultDateRange } from "./nseAnnouncements.js";
 import {
   fetchBseAnnouncements,
@@ -33,6 +34,10 @@ const bsePageSize = Number.parseInt(process.env.BSE_PAGE_SIZE ?? "100", 10);
 const bsePageDelayMs = Number.parseInt(process.env.BSE_PAGE_DELAY_MS ?? "500", 10);
 const combinedStoragePath = resolve(process.cwd(), process.env.COMBINED_STORAGE_FILE ?? "data/combined_announcements.json");
 const combinedMaxStored = Number.parseInt(process.env.COMBINED_MAX_STORED ?? "10000", 10);
+const dedupStoragePath = resolve(process.cwd(), process.env.DEDUP_STORAGE_FILE ?? "data/dedup_announcements.json");
+const dedupMaxStored = Number.parseInt(process.env.DEDUP_MAX_STORED ?? "10000", 10);
+const pdfHashTimeoutMs = Number.parseInt(process.env.PDF_HASH_TIMEOUT_MS ?? "20000", 10);
+const pdfHashConcurrency = Number.parseInt(process.env.PDF_HASH_CONCURRENCY ?? "4", 10);
 
 const notes = [];
 let noteId = 1;
@@ -68,6 +73,18 @@ const stores = {
     exchange: "COMBINED",
     storagePath: combinedStoragePath,
     maxStored: combinedMaxStored,
+    announcements: [],
+    keys: new Set(),
+    loaded: false,
+    lastSyncAt: null,
+    lastSyncStats: null,
+    syncInFlight: null,
+    sourceFingerprint: ""
+  },
+  DEDUP: {
+    exchange: "DEDUP",
+    storagePath: dedupStoragePath,
+    maxStored: dedupMaxStored,
     announcements: [],
     keys: new Set(),
     loaded: false,
@@ -281,10 +298,12 @@ function getAnnouncementKey(exchange, announcement) {
     return explicitKey;
   }
 
-  if (exchange === "COMBINED") {
+  if (exchange === "COMBINED" || exchange === "DEDUP") {
+    const dedupKey =
+      typeof announcement?.dedupAnnouncementKey === "string" ? announcement.dedupAnnouncementKey.trim() : "";
     const mergedKey =
       typeof announcement?.mergedAnnouncementKey === "string" ? announcement.mergedAnnouncementKey.trim() : "";
-    return mergedKey || null;
+    return dedupKey || mergedKey || null;
   }
 
   if (exchange === "BSE") {
@@ -305,7 +324,12 @@ function dedupeAnnouncements(exchange, list) {
     }
 
     seen.add(key);
-    const normalizedExchange = exchange === "COMBINED" ? getExchangeValue(item?.exchange ?? "BSE+NSE") : exchange;
+    const normalizedExchange =
+      exchange === "COMBINED"
+        ? getExchangeValue(item?.exchange ?? "NSE+BSE")
+        : exchange === "DEDUP"
+          ? getExchangeValue(item?.exchange ?? "DEDUP")
+          : exchange;
     deduped.push({
       ...item,
       exchange: normalizedExchange,
@@ -314,35 +338,6 @@ function dedupeAnnouncements(exchange, list) {
   }
 
   return deduped;
-}
-
-function deriveCombinedDedupeKey(item, exchange) {
-  const isin = getAnnouncementIsin(item, exchange);
-  if (!isin) {
-    return null;
-  }
-
-  const dateKey = getAnnouncementDateKey(item, exchange);
-  const attachmentKey = getAnnouncementAttachmentKey(item, exchange);
-  const subjectKey = getAnnouncementSubject(item, exchange);
-
-  if (dateKey && attachmentKey) {
-    return `ISIN:${isin}|DATE:${dateKey}|ATTACH:${attachmentKey}`;
-  }
-
-  if (dateKey && subjectKey) {
-    return `ISIN:${isin}|DATE:${dateKey}|SUBJECT:${subjectKey}`;
-  }
-
-  if (attachmentKey) {
-    return `ISIN:${isin}|ATTACH:${attachmentKey}`;
-  }
-
-  if (subjectKey) {
-    return `ISIN:${isin}|SUBJECT:${subjectKey}`;
-  }
-
-  return null;
 }
 
 function getSourceAnnouncementKey(item, exchange) {
@@ -370,6 +365,10 @@ function buildCombinedSourceFingerprint() {
   ].join("|");
 }
 
+function buildDedupSourceFingerprint() {
+  return [stores.COMBINED.lastSyncAt ?? "none", String(stores.COMBINED.announcements.length)].join("|");
+}
+
 function buildNseListingByIsin() {
   const nseListingByIsin = new Map();
 
@@ -392,15 +391,145 @@ function buildNseListingByIsin() {
   return nseListingByIsin;
 }
 
+function normalizeSourceAnnouncement(item, fallbackExchange = "NSE") {
+  const exchange = getExchangeValue(item?.exchange ?? fallbackExchange);
+  const announcementKey = normalizeText(item?.announcementKey);
+  const timestamp = normalizeText(item?.timestamp ?? "-") || "-";
+  const symbol = normalizeText(item?.symbol ?? "-") || "-";
+  const company = normalizeText(item?.company ?? "-") || "-";
+  const type = normalizeText(item?.type ?? "-") || "-";
+  const attachmentUrl = normalizeText(item?.attachmentUrl ?? item?.attachment_url ?? "");
+  const isin = normalizeIsin(item?.isin);
+  const fallbackSourceKey = `${exchange}:${announcementKey || `${timestamp}|${symbol}|${type}`}`;
+  const sourceKey = normalizeText(item?.sourceKey) || fallbackSourceKey;
+
+  return {
+    sourceKey,
+    exchange,
+    announcementKey: announcementKey || null,
+    timestamp,
+    symbol,
+    company,
+    type,
+    attachmentUrl: attachmentUrl || null,
+    isin
+  };
+}
+
+function dedupeSourceAnnouncements(list, fallbackExchange = "NSE") {
+  const source = Array.isArray(list) ? list : [];
+  const deduped = [];
+  const seen = new Set();
+
+  for (const item of source) {
+    const normalized = normalizeSourceAnnouncement(item, fallbackExchange);
+    if (!normalized.sourceKey || seen.has(normalized.sourceKey)) {
+      continue;
+    }
+
+    seen.add(normalized.sourceKey);
+    deduped.push(normalized);
+  }
+
+  return deduped;
+}
+
+function mergeSourceAnnouncementLists(currentList, incomingList, fallbackExchange = "NSE") {
+  return dedupeSourceAnnouncements([...(Array.isArray(currentList) ? currentList : []), ...(Array.isArray(incomingList) ? incomingList : [])], fallbackExchange);
+}
+
+async function mapWithConcurrency(items, maxConcurrency, mapper) {
+  const source = Array.isArray(items) ? items : [];
+  if (source.length === 0) {
+    return [];
+  }
+
+  const safeConcurrency = Math.max(1, Math.min(source.length, normalizePositiveInt(maxConcurrency, 4)));
+  const results = new Array(source.length);
+  let cursor = 0;
+
+  const worker = async () => {
+    while (true) {
+      const currentIndex = cursor;
+      cursor += 1;
+      if (currentIndex >= source.length) {
+        return;
+      }
+
+      results[currentIndex] = await mapper(source[currentIndex], currentIndex);
+    }
+  };
+
+  await Promise.all(Array.from({ length: safeConcurrency }, () => worker()));
+  return results;
+}
+
+async function fetchPdfHashFromUrl(url) {
+  const normalizedUrl = normalizeText(url);
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  const timeoutMs = normalizePositiveInt(pdfHashTimeoutMs, 20_000);
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(normalizedUrl, {
+      signal: controller.signal,
+      redirect: "follow",
+      headers: {
+        Accept: "application/pdf,*/*"
+      }
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const fileData = Buffer.from(await response.arrayBuffer());
+    if (fileData.length === 0) {
+      return null;
+    }
+
+    return createHash("sha256").update(fileData).digest("hex");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown PDF hash error";
+    log("PDF hash fetch skipped", { message, url: normalizedUrl });
+    return null;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+function shouldPreferDedupCandidate(existingRecord, candidate) {
+  const existingPrimaryExchange = getExchangeValue(existingRecord?.primaryExchange ?? existingRecord?.exchange);
+  const candidateExchange = getExchangeValue(candidate?.exchange);
+
+  if (candidateExchange === "NSE" && existingPrimaryExchange !== "NSE") {
+    return true;
+  }
+
+  if (candidateExchange !== "NSE" && existingPrimaryExchange === "NSE") {
+    return false;
+  }
+
+  const candidateSort = Number(candidate?.sortTimestampMs ?? 0);
+  const existingSort = Number(existingRecord?.sortTimestampMs ?? 0);
+  if (candidateSort !== existingSort) {
+    return candidateSort > existingSort;
+  }
+
+  return String(candidate?.insertedAt ?? "").localeCompare(String(existingRecord?.insertedAt ?? "")) > 0;
+}
+
 function buildCombinedAnnouncements() {
   const sourceItems = [...stores.NSE.announcements, ...stores.BSE.announcements];
   const nseListingByIsin = buildNseListingByIsin();
   const sourceSeen = new Set();
-  const crossExchangeMap = new Map();
   const combined = [];
 
   let sourceDedupedCount = 0;
-  let crossExchangeMergedCount = 0;
   let missingIsinCount = 0;
   let withIsinCount = 0;
 
@@ -450,46 +579,14 @@ function buildCombinedAnnouncements() {
       isin
     };
 
-    const dedupeKey = deriveCombinedDedupeKey(item, exchange);
-    const existing = dedupeKey ? crossExchangeMap.get(dedupeKey) : null;
-
-    if (existing && !existing.exchanges.includes(exchange)) {
-      existing.sourceAnnouncements.push(sourceAnnouncement);
-      existing.exchanges = mergeSortedUnique([...existing.exchanges, exchange]);
-      existing.exchange = existing.exchanges.length > 1 ? "BSE+NSE" : existing.exchanges[0];
-      existing.mergedFromCount = existing.sourceAnnouncements.length;
-      existing.attachment_url = existing.attachment_url || attachmentUrl;
-      existing.isin = existing.isin || isin;
-      existing.hasNseListing = existing.hasNseListing || Boolean(nseListing);
-
-      if (sortTimestampMs > existing.sortTimestampMs) {
-        existing.sortTimestampMs = sortTimestampMs;
-        existing.timestamp = timestamp;
-        existing.symbol = displaySymbol;
-        existing.company = displayCompany;
-        existing.type = type;
-        if (attachmentUrl) {
-          existing.attachment_url = attachmentUrl;
-        }
-      }
-
-      if (nseListing) {
-        existing.symbol = nseListing.symbol || existing.symbol;
-        existing.company = nseListing.company || existing.company;
-      }
-
-      crossExchangeMergedCount += 1;
-      continue;
-    }
-
-    const mergedAnnouncementKey = dedupeKey && !crossExchangeMap.has(dedupeKey) ? dedupeKey : `SOURCE:${sourceKey}`;
+    const mergedAnnouncementKey = `SOURCE:${sourceKey}`;
     const record = {
       exchange,
       exchanges: [exchange],
       mergedFromCount: 1,
       mergedAnnouncementKey,
       announcementKey: mergedAnnouncementKey,
-      dedupeStrategy: dedupeKey ? "isin+date+(attachment|subject)" : "source-key-fallback",
+      dedupeStrategy: "none",
       isin,
       timestamp: timestamp || "-",
       symbol: displaySymbol,
@@ -503,10 +600,6 @@ function buildCombinedAnnouncements() {
     };
 
     combined.push(record);
-
-    if (dedupeKey && !crossExchangeMap.has(dedupeKey)) {
-      crossExchangeMap.set(dedupeKey, record);
-    }
   }
 
   combined.sort((left, right) => {
@@ -526,11 +619,187 @@ function buildCombinedAnnouncements() {
       inputCount: sourceItems.length,
       uniqueSourceCount: sourceSeen.size,
       sourceDedupedCount,
-      crossExchangeMergedCount,
-      mergedRecordCount,
+      crossExchangeMergedCount: 0,
+      mergedRecordCount: 0,
       combinedCount: combined.length,
       withIsinCount,
       missingIsinCount
+    }
+  };
+}
+
+async function buildDedupAnnouncements() {
+  const sourceItems = [...stores.COMBINED.announcements];
+  const nseListingByIsin = buildNseListingByIsin();
+  const pdfHashCache = new Map();
+
+  const resolvePdfHash = async (attachmentUrl) => {
+    const normalized = normalizeText(attachmentUrl);
+    if (!normalized) {
+      return null;
+    }
+
+    if (!pdfHashCache.has(normalized)) {
+      pdfHashCache.set(normalized, fetchPdfHashFromUrl(normalized));
+    }
+
+    return pdfHashCache.get(normalized);
+  };
+
+  let withIsinCount = 0;
+  let missingIsinCount = 0;
+  let withPdfHashCount = 0;
+  let missingPdfHashCount = 0;
+
+  const normalizedSourceItems = await mapWithConcurrency(sourceItems, pdfHashConcurrency, async (item, index) => {
+    const exchange = getExchangeValue(item?.exchange ?? "NSE");
+    const sourceAnnouncements = dedupeSourceAnnouncements(item?.sourceAnnouncements, exchange);
+    const primarySource = sourceAnnouncements[0] ?? normalizeSourceAnnouncement(
+      {
+        sourceKey: normalizeText(item?.sourceKey),
+        exchange,
+        announcementKey: normalizeText(item?.sourceAnnouncementKey ?? item?.announcementKey ?? item?.mergedAnnouncementKey),
+        timestamp: normalizeText(item?.timestamp),
+        symbol: normalizeText(item?.symbol),
+        company: normalizeText(item?.company),
+        type: normalizeText(item?.type),
+        attachmentUrl: normalizeText(item?.attachment_url),
+        isin: normalizeIsin(item?.isin)
+      },
+      exchange
+    );
+    const sourceKey =
+      normalizeText(primarySource?.sourceKey) ||
+      `${exchange}:${normalizeText(item?.announcementKey ?? item?.mergedAnnouncementKey ?? String(index))}`;
+    const isin = normalizeIsin(item?.isin ?? primarySource?.isin);
+    if (isin) {
+      withIsinCount += 1;
+    } else {
+      missingIsinCount += 1;
+    }
+
+    const attachmentUrl = normalizeText(item?.attachment_url ?? primarySource?.attachmentUrl);
+    const pdfHash = await resolvePdfHash(attachmentUrl);
+    if (pdfHash) {
+      withPdfHashCount += 1;
+    } else {
+      missingPdfHashCount += 1;
+    }
+
+    const nseListing = isin ? nseListingByIsin.get(isin) ?? null : null;
+    const displaySymbol = nseListing?.symbol || normalizeText(item?.symbol ?? (primarySource?.symbol || "-")) || "-";
+    const displayCompany = nseListing?.company || normalizeText(item?.company ?? (primarySource?.company || "-")) || "-";
+    const timestamp = normalizeText(item?.timestamp ?? (primarySource?.timestamp || "-")) || "-";
+    const type = normalizeText(item?.type ?? (primarySource?.type || "-")) || "-";
+    const sortTimestampMs = parseTimestampToMillis(timestamp) ?? parseTimestampToMillis(item?.insertedAt) ?? 0;
+
+    return {
+      exchange,
+      sourceKey,
+      sourceAnnouncements: sourceAnnouncements.length > 0 ? sourceAnnouncements : [primarySource],
+      isin,
+      pdfHash,
+      attachmentUrl: attachmentUrl || null,
+      symbol: displaySymbol,
+      company: displayCompany,
+      type,
+      timestamp,
+      hasNseListing: Boolean(nseListing),
+      insertedAt: item?.insertedAt ?? new Date().toISOString(),
+      sortTimestampMs
+    };
+  });
+
+  const dedupMap = new Map();
+  const dedupAnnouncements = [];
+  let sourceDedupedCount = 0;
+
+  for (const item of normalizedSourceItems) {
+    const dedupeKey = item.isin && item.pdfHash ? `ISIN:${item.isin}|PDF:${item.pdfHash}` : `SOURCE:${item.sourceKey}`;
+    const existing = dedupMap.get(dedupeKey);
+
+    if (!existing) {
+      const record = {
+        exchange: item.exchange,
+        exchanges: [item.exchange],
+        mergedFromCount: 1,
+        dedupAnnouncementKey: dedupeKey,
+        mergedAnnouncementKey: dedupeKey,
+        announcementKey: dedupeKey,
+        dedupeStrategy: item.isin && item.pdfHash ? "isin+pdf-hash" : "source-key-fallback",
+        isin: item.isin,
+        pdf_hash: item.pdfHash,
+        timestamp: item.timestamp,
+        symbol: item.symbol,
+        company: item.company,
+        hasNseListing: item.hasNseListing,
+        type: item.type,
+        attachment_url: item.attachmentUrl,
+        sourceAnnouncements: item.sourceAnnouncements,
+        insertedAt: item.insertedAt,
+        sortTimestampMs: item.sortTimestampMs,
+        primaryExchange: item.exchange
+      };
+
+      dedupMap.set(dedupeKey, record);
+      dedupAnnouncements.push(record);
+      continue;
+    }
+
+    sourceDedupedCount += 1;
+    existing.sourceAnnouncements = mergeSourceAnnouncementLists(existing.sourceAnnouncements, item.sourceAnnouncements, item.exchange);
+    existing.exchanges = mergeSortedUnique([...existing.exchanges, item.exchange]);
+    existing.exchange = existing.exchanges.length > 1 ? "NSE+BSE" : existing.exchanges[0];
+    existing.mergedFromCount = existing.sourceAnnouncements.length;
+    existing.isin = existing.isin ?? item.isin;
+    existing.pdf_hash = existing.pdf_hash ?? item.pdfHash;
+    existing.attachment_url = existing.attachment_url || item.attachmentUrl;
+    existing.hasNseListing = existing.hasNseListing || item.hasNseListing;
+
+    if (shouldPreferDedupCandidate(existing, item)) {
+      existing.timestamp = item.timestamp;
+      existing.symbol = item.symbol;
+      existing.company = item.company;
+      existing.type = item.type;
+      if (item.attachmentUrl) {
+        existing.attachment_url = item.attachmentUrl;
+      }
+      existing.insertedAt = item.insertedAt;
+      existing.sortTimestampMs = item.sortTimestampMs;
+      existing.primaryExchange = item.exchange;
+    }
+
+    const nseListing = existing.isin ? nseListingByIsin.get(existing.isin) ?? null : null;
+    if (nseListing) {
+      existing.symbol = nseListing.symbol || existing.symbol;
+      existing.company = nseListing.company || existing.company;
+      existing.hasNseListing = true;
+    }
+  }
+
+  dedupAnnouncements.sort((left, right) => {
+    const sortDiff = (right.sortTimestampMs ?? 0) - (left.sortTimestampMs ?? 0);
+    if (sortDiff !== 0) {
+      return sortDiff;
+    }
+
+    return String(right.insertedAt ?? "").localeCompare(String(left.insertedAt ?? ""));
+  });
+
+  const mergedRecordCount = dedupAnnouncements.reduce((count, item) => count + (item.mergedFromCount > 1 ? 1 : 0), 0);
+
+  return {
+    announcements: dedupAnnouncements,
+    stats: {
+      inputCount: sourceItems.length,
+      dedupCount: sourceDedupedCount,
+      mergedRecordCount,
+      dedupedCount: dedupAnnouncements.length,
+      withIsinCount,
+      missingIsinCount,
+      withPdfHashCount,
+      missingPdfHashCount,
+      hashedUrlCount: pdfHashCache.size
     }
   };
 }
@@ -539,18 +808,38 @@ async function refreshCombinedAnnouncements(trigger = "manual", force = false) {
   const store = stores.COMBINED;
 
   if (store.syncInFlight) {
-    return store.syncInFlight;
+    if (!force) {
+      return store.syncInFlight;
+    }
+
+    try {
+      await store.syncInFlight;
+    } catch {
+      // Swallow in-flight error and continue with a forced refresh.
+    }
   }
 
   store.syncInFlight = (async () => {
     await Promise.all([loadStore("NSE"), loadStore("BSE")]);
 
     const fingerprint = buildCombinedSourceFingerprint();
-    if (!force && store.loaded && store.sourceFingerprint === fingerprint) {
+    const sourceNseSyncAt = stores.NSE.lastSyncAt ?? null;
+    const sourceBseSyncAt = stores.BSE.lastSyncAt ?? null;
+    const combinedSourceNseSyncAt =
+      typeof store.lastSyncStats?.sourceNseSyncAt === "string" ? store.lastSyncStats.sourceNseSyncAt : null;
+    const combinedSourceBseSyncAt =
+      typeof store.lastSyncStats?.sourceBseSyncAt === "string" ? store.lastSyncStats.sourceBseSyncAt : null;
+    const sourceUnchanged =
+      store.sourceFingerprint === fingerprint ||
+      (sourceNseSyncAt &&
+        sourceBseSyncAt &&
+        combinedSourceNseSyncAt === sourceNseSyncAt &&
+        combinedSourceBseSyncAt === sourceBseSyncAt);
+    if (!force && store.loaded && sourceUnchanged) {
       return store.lastSyncStats ?? {
         exchange: "COMBINED",
         trigger,
-        dedupeRule: "ISIN + date + (attachment or subject)",
+        dedupeRule: "None (NSE+BSE raw union)",
         totalStored: store.announcements.length,
         syncedAt: store.lastSyncAt
       };
@@ -558,14 +847,14 @@ async function refreshCombinedAnnouncements(trigger = "manual", force = false) {
 
     const result = buildCombinedAnnouncements();
     store.announcements = result.announcements;
-    store.keys = new Set(store.announcements.map((item) => item.mergedAnnouncementKey));
+    store.keys = new Set(store.announcements.map((item) => getAnnouncementKey("COMBINED", item)).filter(Boolean));
 
     const trimmedCount = trimStore("COMBINED");
     store.lastSyncAt = new Date().toISOString();
     store.lastSyncStats = {
       exchange: "COMBINED",
       trigger,
-      dedupeRule: "ISIN + date + (attachment or subject)",
+      dedupeRule: "None (NSE+BSE raw union)",
       inputCount: result.stats.inputCount,
       uniqueSourceCount: result.stats.uniqueSourceCount,
       sourceDedupedCount: result.stats.sourceDedupedCount,
@@ -573,6 +862,8 @@ async function refreshCombinedAnnouncements(trigger = "manual", force = false) {
       mergedRecordCount: result.stats.mergedRecordCount,
       withIsinCount: result.stats.withIsinCount,
       missingIsinCount: result.stats.missingIsinCount,
+      sourceNseSyncAt,
+      sourceBseSyncAt,
       totalStored: store.announcements.length,
       trimmedCount,
       syncedAt: store.lastSyncAt
@@ -581,6 +872,78 @@ async function refreshCombinedAnnouncements(trigger = "manual", force = false) {
     store.loaded = true;
 
     await persistStore("COMBINED");
+    return store.lastSyncStats;
+  })();
+
+  try {
+    return await store.syncInFlight;
+  } finally {
+    store.syncInFlight = null;
+  }
+}
+
+async function refreshDedupAnnouncements(trigger = "manual", force = false) {
+  const store = stores.DEDUP;
+
+  if (store.syncInFlight) {
+    if (!force) {
+      return store.syncInFlight;
+    }
+
+    try {
+      await store.syncInFlight;
+    } catch {
+      // Swallow in-flight error and continue with a forced refresh.
+    }
+  }
+
+  store.syncInFlight = (async () => {
+    await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED")]);
+    await refreshCombinedAnnouncements(trigger);
+
+    const fingerprint = buildDedupSourceFingerprint();
+    const sourceCombinedSyncAt = stores.COMBINED.lastSyncAt ?? null;
+    const dedupSourceSyncAt =
+      typeof store.lastSyncStats?.sourceCombinedSyncAt === "string" ? store.lastSyncStats.sourceCombinedSyncAt : null;
+    const sourceUnchanged = store.sourceFingerprint === fingerprint || (sourceCombinedSyncAt && dedupSourceSyncAt === sourceCombinedSyncAt);
+    if (!force && store.loaded && sourceUnchanged) {
+      return store.lastSyncStats ?? {
+        exchange: "DEDUP",
+        trigger,
+        dedupeRule: "ISIN + PDF hash",
+        totalStored: store.announcements.length,
+        syncedAt: store.lastSyncAt
+      };
+    }
+
+    const result = await buildDedupAnnouncements();
+    store.announcements = result.announcements;
+    store.keys = new Set(store.announcements.map((item) => getAnnouncementKey("DEDUP", item)).filter(Boolean));
+
+    const trimmedCount = trimStore("DEDUP");
+    store.lastSyncAt = new Date().toISOString();
+    store.lastSyncStats = {
+      exchange: "DEDUP",
+      trigger,
+      dedupeRule: "ISIN + PDF hash",
+      inputCount: result.stats.inputCount,
+      dedupCount: result.stats.dedupCount,
+      mergedRecordCount: result.stats.mergedRecordCount,
+      dedupedCount: result.stats.dedupedCount,
+      withIsinCount: result.stats.withIsinCount,
+      missingIsinCount: result.stats.missingIsinCount,
+      withPdfHashCount: result.stats.withPdfHashCount,
+      missingPdfHashCount: result.stats.missingPdfHashCount,
+      hashedUrlCount: result.stats.hashedUrlCount,
+      sourceCombinedSyncAt,
+      totalStored: store.announcements.length,
+      trimmedCount,
+      syncedAt: store.lastSyncAt
+    };
+    store.sourceFingerprint = fingerprint;
+    store.loaded = true;
+
+    await persistStore("DEDUP");
     return store.lastSyncStats;
   })();
 
@@ -620,6 +983,8 @@ async function loadStore(exchange) {
       store.lastSyncAt = parsed.lastBseSyncAt;
     } else if (exchange === "COMBINED" && typeof parsed?.lastCombinedSyncAt === "string") {
       store.lastSyncAt = parsed.lastCombinedSyncAt;
+    } else if (exchange === "DEDUP" && typeof parsed?.lastDedupSyncAt === "string") {
+      store.lastSyncAt = parsed.lastDedupSyncAt;
     }
 
     if (parsed?.lastSyncStats && typeof parsed.lastSyncStats === "object") {
@@ -630,6 +995,8 @@ async function loadStore(exchange) {
       store.lastSyncStats = parsed.lastBseSyncStats;
     } else if (exchange === "COMBINED" && parsed?.lastCombinedSyncStats && typeof parsed.lastCombinedSyncStats === "object") {
       store.lastSyncStats = parsed.lastCombinedSyncStats;
+    } else if (exchange === "DEDUP" && parsed?.lastDedupSyncStats && typeof parsed.lastDedupSyncStats === "object") {
+      store.lastSyncStats = parsed.lastDedupSyncStats;
     }
 
     log(`Loaded ${exchange} announcement store`, {
@@ -672,6 +1039,11 @@ async function persistStore(exchange) {
               lastCombinedSyncAt: store.lastSyncAt,
               lastCombinedSyncStats: store.lastSyncStats
             }
+          : exchange === "DEDUP"
+            ? {
+                lastDedupSyncAt: store.lastSyncAt,
+                lastDedupSyncStats: store.lastSyncStats
+              }
           : {};
 
   await mkdir(dirname(store.storagePath), { recursive: true });
@@ -959,7 +1331,7 @@ function matchSymbolFilter(item, exchange, symbolFilter) {
 
   const query = symbolFilter.toUpperCase();
 
-  if (exchange === "BSE+NSE" || exchange === "COMBINED") {
+  if (exchange === "NSE+BSE" || exchange === "BSE+NSE" || exchange === "COMBINED" || exchange === "DEDUP") {
     const symbol = String(item?.symbol ?? "").toUpperCase();
     const companyName = String(item?.company ?? "").toUpperCase();
     const isin = String(item?.isin ?? "").toUpperCase();
@@ -991,7 +1363,7 @@ function matchSymbolFilter(item, exchange, symbolFilter) {
 }
 
 async function handleGetAnnouncements(req, res, requestUrl) {
-  await Promise.all([loadStore("NSE"), loadStore("BSE")]);
+  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP")]);
 
   const requestedLimit = Number.parseInt(requestUrl.searchParams.get("limit") ?? "100", 10);
   const limit = Math.min(Math.max(normalizePositiveInt(requestedLimit, 100), 1), 500);
@@ -1004,41 +1376,59 @@ async function handleGetAnnouncements(req, res, requestUrl) {
   const selectedExchange =
     exchangeQuery === "BSE"
       ? "BSE"
+      : exchangeQuery === "DEDUP"
+        ? "DEDUP"
       : exchangeQuery === "ALL"
         ? "ALL"
-        : exchangeQuery === "BSE+NSE" || exchangeQuery === "COMBINED"
-          ? "BSE+NSE"
+        : exchangeQuery === "BSE+NSE" ||
+            exchangeQuery === "NSE+BSE" ||
+            exchangeQuery === "BSENSE" ||
+            exchangeQuery === "NSEBSE" ||
+            exchangeQuery === "COMBINED"
+          ? "NSE+BSE"
           : "NSE";
 
-  if (selectedExchange === "BSE+NSE") {
+  if (selectedExchange === "NSE+BSE") {
     await refreshCombinedAnnouncements("api-request");
+  } else if (selectedExchange === "DEDUP") {
+    await refreshDedupAnnouncements("api-request");
   }
 
   const sourceAnnouncements =
     selectedExchange === "ALL"
       ? [...stores.NSE.announcements, ...stores.BSE.announcements]
-      : selectedExchange === "BSE+NSE"
+      : selectedExchange === "NSE+BSE"
         ? [...stores.COMBINED.announcements]
+        : selectedExchange === "DEDUP"
+          ? [...stores.DEDUP.announcements]
         : [...stores[selectedExchange].announcements];
 
   const filtered = sourceAnnouncements.filter((item) => {
     const filterExchange =
-      selectedExchange === "BSE+NSE" ? "COMBINED" : getExchangeValue(item?.exchange ?? selectedExchange);
+      selectedExchange === "NSE+BSE"
+        ? "COMBINED"
+        : selectedExchange === "DEDUP"
+          ? "DEDUP"
+          : getExchangeValue(item?.exchange ?? selectedExchange);
     return matchSymbolFilter(item, filterExchange, symbolFilter);
   });
 
   const lastSyncAt =
     selectedExchange === "ALL"
       ? { NSE: stores.NSE.lastSyncAt, BSE: stores.BSE.lastSyncAt }
-      : selectedExchange === "BSE+NSE"
+      : selectedExchange === "NSE+BSE"
         ? stores.COMBINED.lastSyncAt
+        : selectedExchange === "DEDUP"
+          ? stores.DEDUP.lastSyncAt
         : stores[selectedExchange].lastSyncAt;
 
   const lastSyncStats =
     selectedExchange === "ALL"
       ? { NSE: stores.NSE.lastSyncStats, BSE: stores.BSE.lastSyncStats }
-      : selectedExchange === "BSE+NSE"
+      : selectedExchange === "NSE+BSE"
         ? stores.COMBINED.lastSyncStats
+        : selectedExchange === "DEDUP"
+          ? stores.DEDUP.lastSyncStats
         : stores[selectedExchange].lastSyncStats;
 
   sendJson(req, res, 200, {
@@ -1053,7 +1443,9 @@ async function handleGetAnnouncements(req, res, requestUrl) {
     lastBseSyncAt: stores.BSE.lastSyncAt,
     lastBseSyncStats: stores.BSE.lastSyncStats,
     lastCombinedSyncAt: stores.COMBINED.lastSyncAt,
-    lastCombinedSyncStats: stores.COMBINED.lastSyncStats
+    lastCombinedSyncStats: stores.COMBINED.lastSyncStats,
+    lastDedupSyncAt: stores.DEDUP.lastSyncAt,
+    lastDedupSyncStats: stores.DEDUP.lastSyncStats
   });
 }
 
@@ -1081,7 +1473,10 @@ async function handleCronRun(req, res) {
     syncNseAnnouncements(trigger),
     syncBseAnnouncements(trigger)
   ]);
-  const combinedResult = await refreshCombinedAnnouncements(trigger)
+  const combinedResult = await refreshCombinedAnnouncements(trigger, true)
+    .then((value) => ({ status: "fulfilled", value }))
+    .catch((reason) => ({ status: "rejected", reason }));
+  const dedupResult = await refreshDedupAnnouncements(trigger, true)
     .then((value) => ({ status: "fulfilled", value }))
     .catch((reason) => ({ status: "rejected", reason }));
 
@@ -1089,7 +1484,8 @@ async function handleCronRun(req, res) {
     ok:
       nseResult.status === "fulfilled" &&
       bseResult.status === "fulfilled" &&
-      combinedResult.status === "fulfilled",
+      combinedResult.status === "fulfilled" &&
+      dedupResult.status === "fulfilled",
     runCount: cronRunCount,
     lastCronRunAt,
     nseSync:
@@ -1103,7 +1499,11 @@ async function handleCronRun(req, res) {
     combinedSync:
       combinedResult.status === "fulfilled"
         ? combinedResult.value
-        : { error: combinedResult.reason instanceof Error ? combinedResult.reason.message : "Unknown combined sync error" }
+        : { error: combinedResult.reason instanceof Error ? combinedResult.reason.message : "Unknown combined sync error" },
+    dedupSync:
+      dedupResult.status === "fulfilled"
+        ? dedupResult.value
+        : { error: dedupResult.reason instanceof Error ? dedupResult.reason.message : "Unknown dedup sync error" }
   };
 
   if (responsePayload.ok) {
@@ -1135,8 +1535,9 @@ async function handleWorkerHeartbeat(req, res) {
 }
 
 async function handleStatus(req, res) {
-  await Promise.all([loadStore("NSE"), loadStore("BSE")]);
+  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP")]);
   await refreshCombinedAnnouncements("status");
+  await refreshDedupAnnouncements("status");
 
   sendJson(req, res, 200, {
     service: appName,
@@ -1150,12 +1551,15 @@ async function handleStatus(req, res) {
     nseAnnouncementsCount: stores.NSE.announcements.length,
     bseAnnouncementsCount: stores.BSE.announcements.length,
     combinedAnnouncementsCount: stores.COMBINED.announcements.length,
+    dedupAnnouncementsCount: stores.DEDUP.announcements.length,
     lastNseSyncAt: stores.NSE.lastSyncAt,
     lastNseSyncStats: stores.NSE.lastSyncStats,
     lastBseSyncAt: stores.BSE.lastSyncAt,
     lastBseSyncStats: stores.BSE.lastSyncStats,
     lastCombinedSyncAt: stores.COMBINED.lastSyncAt,
-    lastCombinedSyncStats: stores.COMBINED.lastSyncStats
+    lastCombinedSyncStats: stores.COMBINED.lastSyncStats,
+    lastDedupSyncAt: stores.DEDUP.lastSyncAt,
+    lastDedupSyncStats: stores.DEDUP.lastSyncStats
   });
 }
 
@@ -1179,7 +1583,7 @@ const server = createServer(async (req, res) => {
           "GET /api/health",
           "GET /api/status",
           "GET/POST /api/notes",
-          "GET /api/notifications/announcements?exchange=NSE|BSE|BSE+NSE|ALL&limit=100&symbol=TCS",
+          "GET /api/notifications/announcements?exchange=NSE|BSE|NSE+BSE|DEDUP|ALL&limit=100&symbol=TCS",
           "POST /api/jobs/daily"
         ]
       });
@@ -1229,8 +1633,8 @@ const server = createServer(async (req, res) => {
   }
 });
 
-Promise.all([loadStore("NSE"), loadStore("BSE")])
-  .then(() => refreshCombinedAnnouncements("startup", true))
+Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP")])
+  .then(() => refreshCombinedAnnouncements("startup"))
   .catch((error) => {
     const message = error instanceof Error ? error.message : "Unknown error";
     log("Announcement stores warm-up failed", { message });
