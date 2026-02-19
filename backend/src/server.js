@@ -2997,8 +2997,22 @@ async function handleAiOnlyRun(req, res) {
     forceEnabled: aiForceEnabled
   });
 
-  await loadStore("DEDUP");
-  await loadAiLabelStore();
+  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore()]);
+
+  let combinedPrep = null;
+  let dedupPrep = null;
+
+  if (stores.COMBINED.announcements.length === 0 && (stores.NSE.announcements.length > 0 || stores.BSE.announcements.length > 0)) {
+    combinedPrep = await refreshCombinedAnnouncements(`${effectiveTrigger}-ai-only-prepare`)
+      .then((value) => ({ status: "fulfilled", value }))
+      .catch((reason) => ({ status: "rejected", reason }));
+  }
+
+  if (stores.DEDUP.announcements.length === 0 && stores.COMBINED.announcements.length > 0) {
+    dedupPrep = await refreshDedupAnnouncements(`${effectiveTrigger}-ai-only-prepare`)
+      .then((value) => ({ status: "fulfilled", value }))
+      .catch((reason) => ({ status: "rejected", reason }));
+  }
 
   const aiClassificationResult =
     await runAiClassificationCron(effectiveTrigger, [], {
@@ -3018,6 +3032,23 @@ async function handleAiOnlyRun(req, res) {
       totalStored: stores.DEDUP.announcements.length,
       lastDedupSyncAt: stores.DEDUP.lastSyncAt
     },
+    prep:
+      combinedPrep || dedupPrep
+        ? {
+            combined:
+              combinedPrep?.status === "fulfilled"
+                ? combinedPrep.value
+                : combinedPrep
+                  ? { error: combinedPrep.reason instanceof Error ? combinedPrep.reason.message : "Unknown error" }
+                  : null,
+            dedup:
+              dedupPrep?.status === "fulfilled"
+                ? dedupPrep.value
+                : dedupPrep
+                  ? { error: dedupPrep.reason instanceof Error ? dedupPrep.reason.message : "Unknown error" }
+                  : null
+          }
+        : null,
     aiClassification:
       aiClassificationResult.status === "fulfilled"
         ? aiClassificationResult.value
