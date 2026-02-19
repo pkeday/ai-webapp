@@ -1399,6 +1399,13 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
 
   const successCount = results.filter((result) => result.ok).length;
   const failureCount = results.length - successCount;
+  const failedSamples = results
+    .filter((result) => !result.ok)
+    .slice(0, 3)
+    .map((result) => ({
+      key: result.key,
+      error: sanitizeSensitiveText(result.error || "Unknown classification failure")
+    }));
 
   return {
     trigger,
@@ -1411,7 +1418,8 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     processedCount: results.length,
     successCount,
     failureCount,
-    failedKeys: results.filter((result) => !result.ok).map((result) => result.key).filter(Boolean)
+    failedKeys: results.filter((result) => !result.ok).map((result) => result.key).filter(Boolean),
+    failedSamples
   };
 }
 
