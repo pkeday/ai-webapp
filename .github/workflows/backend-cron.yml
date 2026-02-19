@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
+    inputs:
+      ai_enabled:
+        description: "Force AI classification for this run only"
+        required: false
+        default: "false"
+      ai_max_items:
+        description: "AI max announcements for this run (optional)"
+        required: false
+        default: ""
 
 jobs:
   run-cron-job:
@@ -13,6 +22,8 @@ jobs:
         env:
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AI_ENABLED_INPUT: ${{ github.event.inputs.ai_enabled || 'false' }}
+          AI_MAX_ITEMS_INPUT: ${{ github.event.inputs.ai_max_items || '' }}
         run: |
           set -euo pipefail
 
@@ -21,12 +32,25 @@ jobs:
             exit 1
           fi
 
+          AI_ENABLED="${AI_ENABLED_INPUT:-false}"
+          AI_MAX_ITEMS="${AI_MAX_ITEMS_INPUT:-}"
+          if [ "${AI_ENABLED}" != "true" ] && [ "${AI_ENABLED}" != "false" ]; then
+            AI_ENABLED="false"
+          fi
+
+          if [ -n "${AI_MAX_ITEMS}" ]; then
+            PAYLOAD="$(jq -n --arg trigger "github-actions-cron" --argjson aiMax "${AI_MAX_ITEMS}" --arg aiEnabled "${AI_ENABLED}" '{trigger:$trigger, ai:{enabled:($aiEnabled=="true"), maxItems:$aiMax}}')"
+          else
+            PAYLOAD="$(jq -n --arg trigger "github-actions-cron" --arg aiEnabled "${AI_ENABLED}" '{trigger:$trigger, ai:{enabled:($aiEnabled=="true")}}')"
+          fi
+
           echo "Triggering backend job at ${API_BASE_URL}/api/jobs/daily"
+          echo "AI override enabled: ${AI_ENABLED}; AI max items override: ${AI_MAX_ITEMS:-<none>}"
 
           curl --fail-with-body --show-error --silent \
             -X POST "${API_BASE_URL}/api/jobs/daily" \
             -H "Content-Type: application/json" \
             -H "x-cron-secret: ${CRON_SECRET}" \
-            -d '{"trigger":"github-actions-cron"}'
+            -d "${PAYLOAD}"
 
           echo "Cron trigger completed"

@@ -1237,15 +1237,19 @@ async function classifyDedupAnnouncement(announcement) {
   };
 }
 
-async function runAiClassificationCron(trigger, touchedDedupKeys = []) {
+async function runAiClassificationCron(trigger, touchedDedupKeys = [], options = {}) {
+  const forceEnabled = options?.forceEnabled === true;
+  const maxItemsOverrideRaw = Number.parseInt(String(options?.maxItems ?? ""), 10);
+  const maxItemsOverride = Number.isFinite(maxItemsOverrideRaw) && maxItemsOverrideRaw > 0 ? maxItemsOverrideRaw : null;
   await loadAiLabelStore();
 
-  if (!aiClassifierEnabled) {
+  if (!aiClassifierEnabled && !forceEnabled) {
     return {
       trigger,
       skipped: true,
       reason: "ai-classifier-disabled",
       criteriaVersion: aiCriteriaVersion,
+      forceEnabled,
       processedCount: 0,
       successCount: 0,
       failureCount: 0
@@ -1258,6 +1262,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = []) {
       skipped: true,
       reason: "missing-provider-keys",
       criteriaVersion: aiCriteriaVersion,
+      forceEnabled,
       processedCount: 0,
       successCount: 0,
       failureCount: 0
@@ -1281,10 +1286,10 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = []) {
 
   if (candidates.length === 0 && aiLabelStore.records.length === 0) {
     // Bootstrap mode for first-time setup.
-    candidates = stores.DEDUP.announcements.slice(0, normalizePositiveInt(aiMaxItemsPerCron, 120));
+    candidates = stores.DEDUP.announcements.slice(0, maxItemsOverride ?? normalizePositiveInt(aiMaxItemsPerCron, 120));
   }
 
-  const maxItems = normalizePositiveInt(aiMaxItemsPerCron, 120);
+  const maxItems = maxItemsOverride ?? normalizePositiveInt(aiMaxItemsPerCron, 120);
   const queue = [];
   let skippedExistingCount = 0;
   const failureRetryWindowMs = normalizePositiveInt(aiFailureRetryHours, 24) * 60 * 60 * 1000;
@@ -1346,6 +1351,8 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = []) {
       skipped: true,
       reason: "no-new-ai-candidates",
       criteriaVersion: aiCriteriaVersion,
+      forceEnabled,
+      maxItems,
       candidateCount: candidates.length,
       skippedExistingCount,
       processedCount: 0,
@@ -1396,6 +1403,8 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = []) {
   return {
     trigger,
     criteriaVersion: aiCriteriaVersion,
+    forceEnabled,
+    maxItems,
     candidateCount: candidates.length,
     queuedCount: queue.length,
     skippedExistingCount,
@@ -2618,6 +2627,10 @@ async function handleCronRun(req, res) {
 
   const body = await readJsonBody(req);
   const trigger = String(body.trigger ?? "unknown");
+  const aiRequest = body?.ai && typeof body.ai === "object" ? body.ai : null;
+  const aiForceEnabled = Boolean(aiRequest?.enabled);
+  const aiMaxItemsRequestRaw = Number.parseInt(String(aiRequest?.maxItems ?? ""), 10);
+  const aiMaxItemsRequest = Number.isFinite(aiMaxItemsRequestRaw) && aiMaxItemsRequestRaw > 0 ? aiMaxItemsRequestRaw : null;
 
   cronRunCount += 1;
   lastCronRunAt = new Date().toISOString();
@@ -2673,7 +2686,10 @@ async function handleCronRun(req, res) {
 
   const aiClassificationResult =
     dedupResult.status === "fulfilled"
-      ? await runAiClassificationCron(trigger, dedupResult.value?.touchedDedupKeys)
+      ? await runAiClassificationCron(trigger, dedupResult.value?.touchedDedupKeys, {
+          forceEnabled: aiForceEnabled,
+          maxItems: aiMaxItemsRequest
+        })
           .then((value) => ({ status: "fulfilled", value }))
           .catch((reason) => ({ status: "rejected", reason }))
       : {
