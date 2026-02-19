@@ -49,8 +49,7 @@ Production setup in this project:
 - `AI_MIN_READABLE_CHARS`: Min extracted text chars to treat PDF as machine-readable (default: `700`).
 - `AI_FAILURE_RETRY_HOURS`: Retry cooldown for failed classifications (default: `24`).
 - `OPENAI_API_KEY`: OpenAI API key for machine-readable announcements.
-- `AI_OPENAI_STAGE1_MODEL`: Low-cost OpenAI stage-1 model (default: `gpt-5-nano`).
-- `AI_OPENAI_STAGE2_MODEL`: Escalation OpenAI model (default: `gpt-5-mini`).
+- OpenAI models are fixed in code to `gpt-5-nano` (stage-1) and `gpt-5-mini` (stage-2).
 - `GEMINI_API_KEY`: Gemini API key for scanned/image-heavy announcements.
 - `AI_GEMINI_STAGE1_MODEL`: Low-cost Gemini stage-1 model (default: `gemini-2.5-flash-lite`).
 - `AI_GEMINI_STAGE2_MODEL`: Escalation Gemini model (default: `gemini-2.5-flash`).
