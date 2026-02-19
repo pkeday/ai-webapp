@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My AI Web App</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>My AI Web App</h1>
+      <p>Built with AI agents, tested anywhere.</p>
+    </header>
+
+    <main class="container">
+      <section class="card">
+        <h2>Status</h2>
+        <p id="status">Loading...</p>
+      </section>
+
+      <section class="card">
+        <h2>Quick Notes</h2>
+        <form id="note-form">
+          <label for="note-input">What do you want to build next?</label>
+          <div class="row">
+            <input id="note-input" name="note" type="text" placeholder="Example: Add login page" required />
+            <button type="submit">Add</button>
+          </div>
+        </form>
+        <ul id="notes"></ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <small>Live deploy ready via GitHub Pages</small>
+    </footer>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
