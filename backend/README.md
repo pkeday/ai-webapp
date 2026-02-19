@@ -65,6 +65,7 @@ Production setup in this project:
 - `GET /api/notes`
 - `POST /api/notes` body `{ "text": "..." }`
 - `POST /api/jobs/daily` (optional secret in `x-cron-secret`)
+- `POST /api/jobs/ai-only` (optional secret in `x-cron-secret`)
 - `POST /api/internal/worker-heartbeat` (optional secret in `x-cron-secret`)
 - `GET /api/notifications/announcements?exchange=NSE|BSE|NSE+BSE|DEDUP|ALL&limit=100&symbol=TCS`
 
@@ -77,4 +78,5 @@ Production setup in this project:
 - A separate combined union table (`COMBINED_STORAGE_FILE`) is rebuilt as `exchange=NSE+BSE` (no dedup).
 - A separate dedup table (`DEDUP_STORAGE_FILE`) is rebuilt using `ISIN + PDF hash` and served with `exchange=DEDUP`.
 - If enabled, AI classification runs after dedup in the same cron run and stores per-announcement labels in `data/announcement_ai_labels.json`.
+- For fast iteration/testing, `POST /api/jobs/ai-only` runs only AI classification over recent dedup announcements (no NSE/BSE refresh, no dedup rebuild).
 - Notifications data is served via `GET /api/notifications/announcements`.

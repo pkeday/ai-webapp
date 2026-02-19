@@ -71,6 +71,8 @@ const notes = [];
 let noteId = 1;
 let cronRunCount = 0;
 let lastCronRunAt = null;
+let aiOnlyRunCount = 0;
+let lastAiOnlyRunAt = null;
 let workerHeartbeatCount = 0;
 let lastWorkerHeartbeatAt = null;
 
@@ -1435,6 +1437,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
   const forceEnabled = options?.forceEnabled === true;
   const maxItemsOverrideRaw = Number.parseInt(String(options?.maxItems ?? ""), 10);
   const maxItemsOverride = Number.isFinite(maxItemsOverrideRaw) && maxItemsOverrideRaw > 0 ? maxItemsOverrideRaw : null;
+  const scanRecentWhenNoTouched = options?.scanRecentWhenNoTouched === true;
   await loadAiLabelStore();
 
   if (!aiClassifierEnabled && !forceEnabled) {
@@ -1478,12 +1481,19 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     .map((key) => dedupByKey.get(key))
     .filter(Boolean);
 
+  const maxItems = maxItemsOverride ?? normalizePositiveInt(aiMaxItemsPerCron, 120);
   if (candidates.length === 0 && aiLabelStore.records.length === 0) {
     // Bootstrap mode for first-time setup.
-    candidates = stores.DEDUP.announcements.slice(0, maxItemsOverride ?? normalizePositiveInt(aiMaxItemsPerCron, 120));
+    candidates = stores.DEDUP.announcements.slice(0, maxItems);
+  } else if (candidates.length === 0 && scanRecentWhenNoTouched) {
+    const recentCandidatePoolRaw = Number.parseInt(String(options?.recentCandidatePool ?? ""), 10);
+    const defaultRecentCandidatePool = Math.max(maxItems * 25, 500);
+    const recentCandidatePool = Number.isFinite(recentCandidatePoolRaw) && recentCandidatePoolRaw > 0
+      ? recentCandidatePoolRaw
+      : defaultRecentCandidatePool;
+    candidates = stores.DEDUP.announcements.slice(0, recentCandidatePool);
   }
 
-  const maxItems = maxItemsOverride ?? normalizePositiveInt(aiMaxItemsPerCron, 120);
   const queue = [];
   let skippedExistingCount = 0;
   const failureRetryWindowMs = normalizePositiveInt(aiFailureRetryHours, 24) * 60 * 60 * 1000;
@@ -2651,6 +2661,20 @@ async function readJsonBody(req) {
   }
 }
 
+function requireCronSecret(req, res, failureMessage = "Invalid cron secret.") {
+  if (!cronSecret) {
+    return true;
+  }
+
+  const providedSecret = req.headers["x-cron-secret"];
+  if (providedSecret === cronSecret) {
+    return true;
+  }
+
+  sendJson(req, res, 401, { error: failureMessage });
+  return false;
+}
+
 function handleHealth(req, res) {
   sendJson(req, res, 200, {
     ok: true,
@@ -2820,12 +2844,8 @@ async function handleGetAnnouncements(req, res, requestUrl) {
 }
 
 async function handleCronRun(req, res) {
-  if (cronSecret) {
-    const providedSecret = req.headers["x-cron-secret"];
-    if (providedSecret !== cronSecret) {
-      sendJson(req, res, 401, { error: "Invalid cron secret." });
-      return;
-    }
+  if (!requireCronSecret(req, res, "Invalid cron secret.")) {
+    return;
   }
 
   const body = await readJsonBody(req);
@@ -2952,6 +2972,72 @@ async function handleCronRun(req, res) {
   sendJson(req, res, 502, responsePayload);
 }
 
+async function handleAiOnlyRun(req, res) {
+  if (!requireCronSecret(req, res, "Invalid AI job secret.")) {
+    return;
+  }
+
+  const body = await readJsonBody(req);
+  const trigger = String(body.trigger ?? "unknown");
+  const aiRequest = body?.ai && typeof body.ai === "object" ? body.ai : null;
+  const aiForceEnabled = aiRequest?.enabled === undefined ? true : Boolean(aiRequest?.enabled);
+  const aiMaxItemsRequestRaw = Number.parseInt(String(aiRequest?.maxItems ?? ""), 10);
+  const aiMaxItemsRequest = Number.isFinite(aiMaxItemsRequestRaw) && aiMaxItemsRequestRaw > 0 ? aiMaxItemsRequestRaw : null;
+  const aiRecentPoolRaw = Number.parseInt(String(aiRequest?.recentCandidatePool ?? ""), 10);
+  const aiRecentPool = Number.isFinite(aiRecentPoolRaw) && aiRecentPoolRaw > 0 ? aiRecentPoolRaw : null;
+  const effectiveTrigger = trigger || "manual-ai-only";
+
+  aiOnlyRunCount += 1;
+  lastAiOnlyRunAt = new Date().toISOString();
+
+  log("AI-only run received", {
+    runCount: aiOnlyRunCount,
+    trigger: effectiveTrigger,
+    maxItems: aiMaxItemsRequest,
+    forceEnabled: aiForceEnabled
+  });
+
+  await loadStore("DEDUP");
+  await loadAiLabelStore();
+
+  const aiClassificationResult =
+    await runAiClassificationCron(effectiveTrigger, [], {
+      forceEnabled: aiForceEnabled,
+      maxItems: aiMaxItemsRequest,
+      scanRecentWhenNoTouched: true,
+      recentCandidatePool: aiRecentPool
+    })
+      .then((value) => ({ status: "fulfilled", value }))
+      .catch((reason) => ({ status: "rejected", reason }));
+
+  const responsePayload = {
+    ok: aiClassificationResult.status === "fulfilled",
+    runCount: aiOnlyRunCount,
+    lastAiOnlyRunAt,
+    dedupSnapshot: {
+      totalStored: stores.DEDUP.announcements.length,
+      lastDedupSyncAt: stores.DEDUP.lastSyncAt
+    },
+    aiClassification:
+      aiClassificationResult.status === "fulfilled"
+        ? aiClassificationResult.value
+        : {
+            error:
+              aiClassificationResult.reason instanceof Error
+                ? aiClassificationResult.reason.message
+                : "Unknown AI classification error"
+          }
+  };
+
+  if (responsePayload.ok) {
+    sendJson(req, res, 200, responsePayload);
+    return;
+  }
+
+  log("AI-only classification run finished with errors", responsePayload);
+  sendJson(req, res, 502, responsePayload);
+}
+
 async function handleWorkerHeartbeat(req, res) {
   if (cronSecret) {
     const providedSecret = req.headers["x-cron-secret"];
@@ -2988,6 +3074,8 @@ async function handleStatus(req, res) {
     notesCount: notes.length,
     cronRunCount,
     lastCronRunAt,
+    aiOnlyRunCount,
+    lastAiOnlyRunAt,
     workerHeartbeatCount,
     lastWorkerHeartbeatAt,
     nseAnnouncementsCount: stores.NSE.announcements.length,
@@ -3038,7 +3126,8 @@ const server = createServer(async (req, res) => {
           "GET /api/status",
           "GET/POST /api/notes",
           "GET /api/notifications/announcements?exchange=NSE|BSE|NSE+BSE|DEDUP|ALL&limit=100&symbol=TCS",
-          "POST /api/jobs/daily"
+          "POST /api/jobs/daily",
+          "POST /api/jobs/ai-only"
         ]
       });
       return;
@@ -3071,6 +3160,11 @@ const server = createServer(async (req, res) => {
 
     if (method === "POST" && requestUrl.pathname === "/api/jobs/daily") {
       await handleCronRun(req, res);
+      return;
+    }
+
+    if (method === "POST" && requestUrl.pathname === "/api/jobs/ai-only") {
+      await handleAiOnlyRun(req, res);
       return;
     }
 

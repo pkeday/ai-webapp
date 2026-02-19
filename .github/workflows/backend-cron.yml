@@ -5,6 +5,10 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
+      job_mode:
+        description: "Job mode: daily or ai-only"
+        required: false
+        default: "daily"
       ai_enabled:
         description: "Force AI classification for this run only"
         required: false
@@ -22,6 +26,7 @@ jobs:
         env:
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          JOB_MODE_INPUT: ${{ github.event.inputs.job_mode || 'daily' }}
           AI_ENABLED_INPUT: ${{ github.event.inputs.ai_enabled || 'false' }}
           AI_MAX_ITEMS_INPUT: ${{ github.event.inputs.ai_max_items || '' }}
         run: |
@@ -30,6 +35,17 @@ jobs:
           if [ -z "${API_BASE_URL}" ] || [ -z "${CRON_SECRET}" ]; then
             echo "Missing required secrets: API_BASE_URL or CRON_SECRET"
             exit 1
+          fi
+
+          JOB_MODE="${JOB_MODE_INPUT:-daily}"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            JOB_MODE="daily"
+          fi
+          if [ "${JOB_MODE}" = "ai-only" ]; then
+            JOB_PATH="/api/jobs/ai-only"
+          else
+            JOB_MODE="daily"
+            JOB_PATH="/api/jobs/daily"
           fi
 
           AI_ENABLED="${AI_ENABLED_INPUT:-false}"
@@ -44,15 +60,15 @@ jobs:
             PAYLOAD="$(jq -n --arg trigger "github-actions-cron" --arg aiEnabled "${AI_ENABLED}" '{trigger:$trigger, ai:{enabled:($aiEnabled=="true")}}')"
           fi
 
-          echo "Triggering backend job at ${API_BASE_URL}/api/jobs/daily"
-          echo "AI override enabled: ${AI_ENABLED}; AI max items override: ${AI_MAX_ITEMS:-<none>}"
+          echo "Triggering backend job at ${API_BASE_URL}${JOB_PATH}"
+          echo "Job mode: ${JOB_MODE}; AI override enabled: ${AI_ENABLED}; AI max items override: ${AI_MAX_ITEMS:-<none>}"
 
           RESPONSE_FILE="$(mktemp)"
           HTTP_CODE="$(
             curl --show-error --silent \
               -o "${RESPONSE_FILE}" \
               -w "%{http_code}" \
-              -X POST "${API_BASE_URL}/api/jobs/daily" \
+              -X POST "${API_BASE_URL}${JOB_PATH}" \
               -H "Content-Type: application/json" \
               -H "x-cron-secret: ${CRON_SECRET}" \
               -d "${PAYLOAD}"
