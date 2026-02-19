@@ -3,51 +3,180 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My AI Web App</title>
+    <title>AI Web App - Brokerage Emails</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <header class="topbar">
-      <h1>My AI Web App</h1>
-      <p>Built with AI agents, tested anywhere.</p>
-    </header>
-
-    <main class="container">
-      <section class="card">
-        <h2>Status</h2>
-        <p id="status">Loading...</p>
-        <p id="api-status">API status: Not checked yet</p>
-        <form id="api-form">
-          <label for="api-base-input">Backend API URL</label>
-          <div class="row">
-            <input
-              id="api-base-input"
-              name="apiBase"
-              type="url"
-              placeholder="https://your-backend.onrender.com"
-              required
-            />
-            <button type="submit">Save + Test</button>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="header-row">
+          <div class="brand">
+            <h1>AI Web App</h1>
+            <p>Sub-app 1: Brokerage Emails</p>
           </div>
-        </form>
-      </section>
-
-      <section class="card">
-        <h2>Quick Notes</h2>
-        <form id="note-form">
-          <label for="note-input">What do you want to build next?</label>
-          <div class="row">
-            <input id="note-input" name="note" type="text" placeholder="Example: Add login page" required />
-            <button type="submit">Add</button>
+          <div class="header-actions">
+            <button id="google-connect-btn" class="btn">Google Sign-In (Next)</button>
+            <button id="run-ingest-btn" class="btn">Run ingest now</button>
+            <button id="send-digest-btn" class="btn primary">Send digest preview</button>
           </div>
-        </form>
-        <ul id="notes"></ul>
-      </section>
-    </main>
+        </div>
 
-    <footer class="footer">
-      <small>Live deploy ready via GitHub Pages</small>
-    </footer>
+        <div class="status-strip">
+          <span id="backend-status">Backend status: checking...</span>
+          <span id="pipeline-status">Pipeline status: using frontend mock data</span>
+        </div>
+
+        <nav class="view-tabs" aria-label="Brokerage Email Views">
+          <button class="tab active" data-view="dashboard">Dashboard</button>
+          <button class="tab" data-view="company">Company View</button>
+          <button class="tab" data-view="settings">Settings</button>
+          <button class="tab" data-view="digest">Digest Preview</button>
+        </nav>
+      </header>
+
+      <main class="app-main">
+        <section id="view-dashboard" class="view active">
+          <div class="filters">
+            <label>
+              Broker
+              <select id="filter-broker"></select>
+            </label>
+            <label>
+              Report Type
+              <select id="filter-type">
+                <option value="All">All</option>
+                <option value="Initiation">Initiation</option>
+                <option value="Results Update">Results Update</option>
+                <option value="General Update">General Update</option>
+                <option value="Sector Update">Sector Update</option>
+              </select>
+            </label>
+            <label>
+              Company Search
+              <input id="filter-search" type="search" placeholder="Reliance, UltraTech, ICICI..." />
+            </label>
+            <label class="inline-check">
+              <input id="filter-duplicates" type="checkbox" />
+              Include duplicate snippets
+            </label>
+          </div>
+
+          <div class="chip-row" id="control-chip-row"></div>
+
+          <div class="kpi-grid" id="kpi-grid"></div>
+
+          <div class="broker-lanes" id="broker-lanes"></div>
+        </section>
+
+        <section id="view-company" class="view">
+          <div class="company-topbar">
+            <label>
+              Company
+              <select id="company-select"></select>
+            </label>
+            <label>
+              Sort
+              <select id="company-sort">
+                <option value="latest">Latest first</option>
+                <option value="broker">Broker name</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="split-layout">
+            <article class="panel">
+              <header>Broker Perspectives (kept separate)</header>
+              <div class="panel-body timeline" id="company-timeline"></div>
+            </article>
+            <aside class="panel">
+              <header>Analyst Workbench</header>
+              <div class="panel-body" id="company-workbench"></div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="view-settings" class="view">
+          <div class="split-layout">
+            <article class="panel">
+              <header>Company Normalization Dictionary</header>
+              <div class="panel-body">
+                <form id="dictionary-form" class="inline-form">
+                  <input id="dictionary-canonical" type="text" placeholder="Canonical company name" required />
+                  <input id="dictionary-ticker" type="text" placeholder="Ticker (example: NSE:RIL)" required />
+                  <input id="dictionary-aliases" type="text" placeholder="Aliases comma separated" required />
+                  <button class="btn" type="submit">Add mapping</button>
+                </form>
+
+                <div class="table-wrap">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>Canonical</th>
+                        <th>Ticker</th>
+                        <th>Aliases</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dictionary-table"></tbody>
+                  </table>
+                </div>
+              </div>
+            </article>
+
+            <aside class="panel">
+              <header>Control Lists and Daily Email</header>
+              <div class="panel-body settings-stack">
+                <div>
+                  <h3>Priority Companies</h3>
+                  <form id="priority-form" class="inline-form compact">
+                    <input id="priority-input" type="text" placeholder="Add canonical company" required />
+                    <button class="btn" type="submit">Add</button>
+                  </form>
+                  <div class="chip-row" id="priority-list"></div>
+                </div>
+
+                <div>
+                  <h3>Ignore Companies</h3>
+                  <form id="ignore-form" class="inline-form compact">
+                    <input id="ignore-input" type="text" placeholder="Add canonical company" required />
+                    <button class="btn" type="submit">Add</button>
+                  </form>
+                  <div class="chip-row" id="ignore-list"></div>
+                </div>
+
+                <div>
+                  <h3>Digest Recipients</h3>
+                  <form id="recipient-form" class="inline-form compact">
+                    <input id="recipient-input" type="email" placeholder="email@domain.com" required />
+                    <button class="btn" type="submit">Add</button>
+                  </form>
+                  <div class="chip-row" id="recipient-list"></div>
+                </div>
+
+                <div>
+                  <h3>Digest Schedule</h3>
+                  <div class="inline-form compact">
+                    <input id="schedule-input" type="text" value="Daily 07:30 IST" />
+                    <button id="schedule-save-btn" class="btn" type="button">Save</button>
+                  </div>
+                </div>
+
+                <div class="note good">
+                  Shared archived links let recipients open source emails without Gmail account access.
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="view-digest" class="view">
+          <article class="panel">
+            <header>Daily Digest Preview</header>
+            <div class="panel-body" id="digest-preview"></div>
+          </article>
+        </section>
+      </main>
+    </div>
 
     <script src="./app.js" type="module"></script>
   </body>
