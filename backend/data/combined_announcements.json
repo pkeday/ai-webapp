@@ -1,0 +1,3139 @@
+{
+  "updatedAt": "2026-02-19T08:41:05.703Z",
+  "exchange": "BSE+NSE",
+  "lastSyncAt": "2026-02-19T08:41:05.703Z",
+  "lastCombinedSyncAt": "2026-02-19T08:41:05.703Z",
+  "lastSyncStats": {
+    "exchange": "COMBINED",
+    "trigger": "bundled-snapshot",
+    "dedupeRule": "snapshot fallback (no cross-exchange dedupe)",
+    "inputCount": 100,
+    "uniqueSourceCount": 100,
+    "sourceDedupedCount": 0,
+    "crossExchangeMergedCount": 0,
+    "mergedRecordCount": 0,
+    "withIsinCount": 50,
+    "missingIsinCount": 50,
+    "totalStored": 100,
+    "trimmedCount": 0,
+    "syncedAt": "2026-02-19T08:41:05.703Z"
+  },
+  "lastCombinedSyncStats": {
+    "exchange": "COMBINED",
+    "trigger": "bundled-snapshot",
+    "dedupeRule": "snapshot fallback (no cross-exchange dedupe)",
+    "inputCount": 100,
+    "uniqueSourceCount": 100,
+    "sourceDedupedCount": 0,
+    "crossExchangeMergedCount": 0,
+    "mergedRecordCount": 0,
+    "withIsinCount": 50,
+    "missingIsinCount": 50,
+    "totalStored": 100,
+    "trimmedCount": 0,
+    "syncedAt": "2026-02-19T08:41:05.703Z"
+  },
+  "total": 100,
+  "announcements": [
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:3db36d10-bea9-431b-80b3-93f12bec8737",
+      "announcementKey": "BSE:3db36d10-bea9-431b-80b3-93f12bec8737",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:29:08.97",
+      "symbol": "532336",
+      "company": "Baron Infotech Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/a98afc8c-ba00-4848-aee4-4db4a8fa2333.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:3db36d10-bea9-431b-80b3-93f12bec8737",
+          "exchange": "BSE",
+          "announcementKey": "3db36d10-bea9-431b-80b3-93f12bec8737",
+          "timestamp": "2026-02-19T12:29:08.97",
+          "symbol": "532336",
+          "company": "Baron Infotech Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/a98afc8c-ba00-4848-aee4-4db4a8fa2333.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771484348970
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:7fb4ea40-1108-48b0-9708-07dfbd93e87e",
+      "announcementKey": "BSE:7fb4ea40-1108-48b0-9708-07dfbd93e87e",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:19:13.38",
+      "symbol": "532782",
+      "company": "Sutlej Textiles and Industries Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/6800496d-cf48-457f-b0bc-8d6de41e4853.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:7fb4ea40-1108-48b0-9708-07dfbd93e87e",
+          "exchange": "BSE",
+          "announcementKey": "7fb4ea40-1108-48b0-9708-07dfbd93e87e",
+          "timestamp": "2026-02-19T12:19:13.38",
+          "symbol": "532782",
+          "company": "Sutlej Textiles and Industries Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/6800496d-cf48-457f-b0bc-8d6de41e4853.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483753380
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:0f012b76-6f2b-4587-914c-07b133a1f8e7",
+      "announcementKey": "BSE:0f012b76-6f2b-4587-914c-07b133a1f8e7",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:18:24.347",
+      "symbol": "505160",
+      "company": "Talbros Automotive Components Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/a15d21d3-55ea-45c6-b88a-df29df3dd801.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:0f012b76-6f2b-4587-914c-07b133a1f8e7",
+          "exchange": "BSE",
+          "announcementKey": "0f012b76-6f2b-4587-914c-07b133a1f8e7",
+          "timestamp": "2026-02-19T12:18:24.347",
+          "symbol": "505160",
+          "company": "Talbros Automotive Components Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/a15d21d3-55ea-45c6-b88a-df29df3dd801.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483704347
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:f08411dc-df3c-46fe-88b8-5d8bd99a8ec9",
+      "announcementKey": "BSE:f08411dc-df3c-46fe-88b8-5d8bd99a8ec9",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:16:53.157",
+      "symbol": "523550",
+      "company": "Krypton Industries Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/1bf5eb25-c067-4a94-a617-0f4550247afe.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:f08411dc-df3c-46fe-88b8-5d8bd99a8ec9",
+          "exchange": "BSE",
+          "announcementKey": "f08411dc-df3c-46fe-88b8-5d8bd99a8ec9",
+          "timestamp": "2026-02-19T12:16:53.157",
+          "symbol": "523550",
+          "company": "Krypton Industries Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/1bf5eb25-c067-4a94-a617-0f4550247afe.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483613157
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:7323f03a-72bd-4f61-9098-ac8dd661510c",
+      "announcementKey": "BSE:7323f03a-72bd-4f61-9098-ac8dd661510c",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:16:29.813",
+      "symbol": "544544",
+      "company": "Telge Projects Ltd",
+      "type": "AGM/EGM",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/00a0c30a-5f05-4b8d-8476-96ea568d1770.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:7323f03a-72bd-4f61-9098-ac8dd661510c",
+          "exchange": "BSE",
+          "announcementKey": "7323f03a-72bd-4f61-9098-ac8dd661510c",
+          "timestamp": "2026-02-19T12:16:29.813",
+          "symbol": "544544",
+          "company": "Telge Projects Ltd",
+          "type": "AGM/EGM",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/00a0c30a-5f05-4b8d-8476-96ea568d1770.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483589813
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:31c29e98-2068-4577-91bf-5958025f27dc",
+      "announcementKey": "BSE:31c29e98-2068-4577-91bf-5958025f27dc",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:15:22.047",
+      "symbol": "531727",
+      "company": "Menon Pistons Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/599440bc-46a5-4f14-8009-e0127991458b.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:31c29e98-2068-4577-91bf-5958025f27dc",
+          "exchange": "BSE",
+          "announcementKey": "31c29e98-2068-4577-91bf-5958025f27dc",
+          "timestamp": "2026-02-19T12:15:22.047",
+          "symbol": "531727",
+          "company": "Menon Pistons Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/599440bc-46a5-4f14-8009-e0127991458b.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483522047
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:100b8ce3-41fe-4b64-b934-90dfb2419152",
+      "announcementKey": "BSE:100b8ce3-41fe-4b64-b934-90dfb2419152",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:12:47.45",
+      "symbol": "532493",
+      "company": "Astra Microwave Products Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/82557eb2-8eb5-49c4-b6db-4fe6f8761102.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:100b8ce3-41fe-4b64-b934-90dfb2419152",
+          "exchange": "BSE",
+          "announcementKey": "100b8ce3-41fe-4b64-b934-90dfb2419152",
+          "timestamp": "2026-02-19T12:12:47.45",
+          "symbol": "532493",
+          "company": "Astra Microwave Products Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/82557eb2-8eb5-49c4-b6db-4fe6f8761102.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483367450
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:adbacfe3-4d53-4a26-a576-80733f7cc882",
+      "announcementKey": "BSE:adbacfe3-4d53-4a26-a576-80733f7cc882",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:12:19.103",
+      "symbol": "523550",
+      "company": "Krypton Industries Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/dba0cb91-6760-43a7-bace-a64d47639230.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:adbacfe3-4d53-4a26-a576-80733f7cc882",
+          "exchange": "BSE",
+          "announcementKey": "adbacfe3-4d53-4a26-a576-80733f7cc882",
+          "timestamp": "2026-02-19T12:12:19.103",
+          "symbol": "523550",
+          "company": "Krypton Industries Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/dba0cb91-6760-43a7-bace-a64d47639230.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483339103
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:cdf8c80b-5eef-45f1-8716-9a9bdda4d796",
+      "announcementKey": "BSE:cdf8c80b-5eef-45f1-8716-9a9bdda4d796",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:11:26.81",
+      "symbol": "543300",
+      "company": "Sona BLW Precision Forgings Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/83cdcc7b-1b61-4bef-904e-e93c75d3715b.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:cdf8c80b-5eef-45f1-8716-9a9bdda4d796",
+          "exchange": "BSE",
+          "announcementKey": "cdf8c80b-5eef-45f1-8716-9a9bdda4d796",
+          "timestamp": "2026-02-19T12:11:26.81",
+          "symbol": "543300",
+          "company": "Sona BLW Precision Forgings Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/83cdcc7b-1b61-4bef-904e-e93c75d3715b.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483286810
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:8b881e35-f09b-4666-9432-e767baff57b8",
+      "announcementKey": "BSE:8b881e35-f09b-4666-9432-e767baff57b8",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:10:00.3",
+      "symbol": "532932",
+      "company": "Manaksia Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/1c1eaf5e-dd07-4cc5-8e86-4dae258169cd.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:8b881e35-f09b-4666-9432-e767baff57b8",
+          "exchange": "BSE",
+          "announcementKey": "8b881e35-f09b-4666-9432-e767baff57b8",
+          "timestamp": "2026-02-19T12:10:00.3",
+          "symbol": "532932",
+          "company": "Manaksia Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/1c1eaf5e-dd07-4cc5-8e86-4dae258169cd.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483200300
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:e4a62cf6-d150-458d-9cb4-efda04a7e09b",
+      "announcementKey": "BSE:e4a62cf6-d150-458d-9cb4-efda04a7e09b",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:09:56.633",
+      "symbol": "500136",
+      "company": "Ester Industries Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/84b4f7c4-c08e-498c-8790-6af420d60cef.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:e4a62cf6-d150-458d-9cb4-efda04a7e09b",
+          "exchange": "BSE",
+          "announcementKey": "e4a62cf6-d150-458d-9cb4-efda04a7e09b",
+          "timestamp": "2026-02-19T12:09:56.633",
+          "symbol": "500136",
+          "company": "Ester Industries Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/84b4f7c4-c08e-498c-8790-6af420d60cef.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483196633
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:d9205d71-1804-49b4-8988-97d389ea2a42",
+      "announcementKey": "BSE:d9205d71-1804-49b4-8988-97d389ea2a42",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:09:18.52",
+      "symbol": "543300",
+      "company": "Sona BLW Precision Forgings Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/871585cb-2de2-4a3c-b874-5ec30e1b9f87.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:d9205d71-1804-49b4-8988-97d389ea2a42",
+          "exchange": "BSE",
+          "announcementKey": "d9205d71-1804-49b4-8988-97d389ea2a42",
+          "timestamp": "2026-02-19T12:09:18.52",
+          "symbol": "543300",
+          "company": "Sona BLW Precision Forgings Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/871585cb-2de2-4a3c-b874-5ec30e1b9f87.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483158520
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:c20b248c-889b-4ced-ae82-0db4717f9bb8",
+      "announcementKey": "BSE:c20b248c-889b-4ced-ae82-0db4717f9bb8",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:07:17.9",
+      "symbol": "544606",
+      "company": "Pine Labs Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/c536680b-80d4-409a-b532-82469486442c.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:c20b248c-889b-4ced-ae82-0db4717f9bb8",
+          "exchange": "BSE",
+          "announcementKey": "c20b248c-889b-4ced-ae82-0db4717f9bb8",
+          "timestamp": "2026-02-19T12:07:17.9",
+          "symbol": "544606",
+          "company": "Pine Labs Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/c536680b-80d4-409a-b532-82469486442c.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771483037900
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:6f8f6515-8a91-49c3-8f84-db5eb932dfba",
+      "announcementKey": "BSE:6f8f6515-8a91-49c3-8f84-db5eb932dfba",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:02:59.293",
+      "symbol": "543657",
+      "company": "Archean Chemical Industries Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/30e63845-ef61-44ac-8b67-794b70c724e7.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:6f8f6515-8a91-49c3-8f84-db5eb932dfba",
+          "exchange": "BSE",
+          "announcementKey": "6f8f6515-8a91-49c3-8f84-db5eb932dfba",
+          "timestamp": "2026-02-19T12:02:59.293",
+          "symbol": "543657",
+          "company": "Archean Chemical Industries Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/30e63845-ef61-44ac-8b67-794b70c724e7.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482779293
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:e5e0af8b-0d79-435f-8b02-7b906f7a4540",
+      "announcementKey": "BSE:e5e0af8b-0d79-435f-8b02-7b906f7a4540",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:02:09.033",
+      "symbol": "543442",
+      "company": "Brand Concepts Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/fac61f88-9c6b-4a73-be9d-6512a13d6aaa.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:e5e0af8b-0d79-435f-8b02-7b906f7a4540",
+          "exchange": "BSE",
+          "announcementKey": "e5e0af8b-0d79-435f-8b02-7b906f7a4540",
+          "timestamp": "2026-02-19T12:02:09.033",
+          "symbol": "543442",
+          "company": "Brand Concepts Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/fac61f88-9c6b-4a73-be9d-6512a13d6aaa.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482729033
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:f38b3091-d519-4843-8922-70bffcf0363d",
+      "announcementKey": "BSE:f38b3091-d519-4843-8922-70bffcf0363d",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:01:02.15",
+      "symbol": "530855",
+      "company": "GDL Leasing & Finance Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/bfb56706-63c2-4748-97df-a2974cc8d59e.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:f38b3091-d519-4843-8922-70bffcf0363d",
+          "exchange": "BSE",
+          "announcementKey": "f38b3091-d519-4843-8922-70bffcf0363d",
+          "timestamp": "2026-02-19T12:01:02.15",
+          "symbol": "530855",
+          "company": "GDL Leasing & Finance Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/bfb56706-63c2-4748-97df-a2974cc8d59e.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482662150
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539992",
+      "announcementKey": "NSE:106539992",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE15B701018",
+      "timestamp": "19-Feb-2026 12:00:56",
+      "symbol": "PINELABS",
+      "company": "Pine Labs Limited",
+      "type": "Press Release",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/PINELABS_19022026120027_IntimationOpenAIPR.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539992",
+          "exchange": "NSE",
+          "announcementKey": "106539992",
+          "timestamp": "19-Feb-2026 12:00:56",
+          "symbol": "PINELABS",
+          "company": "Pine Labs Limited",
+          "type": "Press Release",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/PINELABS_19022026120027_IntimationOpenAIPR.pdf",
+          "isin": "INE15B701018"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771482656000
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:2afadfd8-2dd4-42ea-9520-896c09293be9",
+      "announcementKey": "BSE:2afadfd8-2dd4-42ea-9520-896c09293be9",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T12:00:38.303",
+      "symbol": "544447",
+      "company": "Smartworks Coworking Spaces Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/7f0462f0-298a-4e23-8f85-0d9b2b630832.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:2afadfd8-2dd4-42ea-9520-896c09293be9",
+          "exchange": "BSE",
+          "announcementKey": "2afadfd8-2dd4-42ea-9520-896c09293be9",
+          "timestamp": "2026-02-19T12:00:38.303",
+          "symbol": "544447",
+          "company": "Smartworks Coworking Spaces Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/7f0462f0-298a-4e23-8f85-0d9b2b630832.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482638303
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:bfe0ae29-5b64-4706-8550-9c6bf1c35616",
+      "announcementKey": "BSE:bfe0ae29-5b64-4706-8550-9c6bf1c35616",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:58:44.15",
+      "symbol": "542905",
+      "company": "Hindware Home Innovation Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/b2a3a99b-bd5f-46b9-affb-d41269bbc92f.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:bfe0ae29-5b64-4706-8550-9c6bf1c35616",
+          "exchange": "BSE",
+          "announcementKey": "bfe0ae29-5b64-4706-8550-9c6bf1c35616",
+          "timestamp": "2026-02-19T11:58:44.15",
+          "symbol": "542905",
+          "company": "Hindware Home Innovation Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/b2a3a99b-bd5f-46b9-affb-d41269bbc92f.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482524150
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:fc6743a4-5dc8-4c7d-aad5-5fd74b15dbb6",
+      "announcementKey": "BSE:fc6743a4-5dc8-4c7d-aad5-5fd74b15dbb6",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:58:26.247",
+      "symbol": "544166",
+      "company": "Emmforce Autotech Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/0f186705-8711-40b9-942a-1e0171d4f2ef.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:fc6743a4-5dc8-4c7d-aad5-5fd74b15dbb6",
+          "exchange": "BSE",
+          "announcementKey": "fc6743a4-5dc8-4c7d-aad5-5fd74b15dbb6",
+          "timestamp": "2026-02-19T11:58:26.247",
+          "symbol": "544166",
+          "company": "Emmforce Autotech Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/0f186705-8711-40b9-942a-1e0171d4f2ef.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482506247
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539991",
+      "announcementKey": "NSE:106539991",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE977Y01011",
+      "timestamp": "19-Feb-2026 11:58:05",
+      "symbol": "BCONCEPTS",
+      "company": "Brand Concepts Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/BCONCEPTS_19022026115715_transcriptfinalq3.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539991",
+          "exchange": "NSE",
+          "announcementKey": "106539991",
+          "timestamp": "19-Feb-2026 11:58:05",
+          "symbol": "BCONCEPTS",
+          "company": "Brand Concepts Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/BCONCEPTS_19022026115715_transcriptfinalq3.pdf",
+          "isin": "INE977Y01011"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771482485000
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:6186f2d3-b570-4412-b22b-10f7bb3109a0",
+      "announcementKey": "BSE:6186f2d3-b570-4412-b22b-10f7bb3109a0",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:56:37.947",
+      "symbol": "544311",
+      "company": "International Gemmological Institute India Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/f8f6e45c-59bc-42ce-9bd2-239993aa2328.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:6186f2d3-b570-4412-b22b-10f7bb3109a0",
+          "exchange": "BSE",
+          "announcementKey": "6186f2d3-b570-4412-b22b-10f7bb3109a0",
+          "timestamp": "2026-02-19T11:56:37.947",
+          "symbol": "544311",
+          "company": "International Gemmological Institute India Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/f8f6e45c-59bc-42ce-9bd2-239993aa2328.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482397947
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:073a9d14-046c-4caf-b5f6-1561e97c8fd6",
+      "announcementKey": "BSE:073a9d14-046c-4caf-b5f6-1561e97c8fd6",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:55:58.047",
+      "symbol": "504380",
+      "company": "Flomic Global Logistics Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/d213ba5b-a8c1-4a21-8ce4-caeda4283318.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:073a9d14-046c-4caf-b5f6-1561e97c8fd6",
+          "exchange": "BSE",
+          "announcementKey": "073a9d14-046c-4caf-b5f6-1561e97c8fd6",
+          "timestamp": "2026-02-19T11:55:58.047",
+          "symbol": "504380",
+          "company": "Flomic Global Logistics Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/d213ba5b-a8c1-4a21-8ce4-caeda4283318.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482358047
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:3a3d3e93-f42c-4008-af15-c9a2cd33b107",
+      "announcementKey": "BSE:3a3d3e93-f42c-4008-af15-c9a2cd33b107",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:55:11.57",
+      "symbol": "544583",
+      "company": "Canara HSBC Life Insurance Company Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/7fbeb3a4-8c8b-451c-9f74-086904db486f.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:3a3d3e93-f42c-4008-af15-c9a2cd33b107",
+          "exchange": "BSE",
+          "announcementKey": "3a3d3e93-f42c-4008-af15-c9a2cd33b107",
+          "timestamp": "2026-02-19T11:55:11.57",
+          "symbol": "544583",
+          "company": "Canara HSBC Life Insurance Company Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/7fbeb3a4-8c8b-451c-9f74-086904db486f.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482311570
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:092795b3-44b6-4276-8227-dc4078d22aa9",
+      "announcementKey": "BSE:092795b3-44b6-4276-8227-dc4078d22aa9",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:55:09.76",
+      "symbol": "523550",
+      "company": "Krypton Industries Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/605e52d7-f2db-4dce-925c-6de821405967.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:092795b3-44b6-4276-8227-dc4078d22aa9",
+          "exchange": "BSE",
+          "announcementKey": "092795b3-44b6-4276-8227-dc4078d22aa9",
+          "timestamp": "2026-02-19T11:55:09.76",
+          "symbol": "523550",
+          "company": "Krypton Industries Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/605e52d7-f2db-4dce-925c-6de821405967.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482309760
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:b32de5e0-0c2e-4802-9c78-4c42d7f69bf5",
+      "announcementKey": "BSE:b32de5e0-0c2e-4802-9c78-4c42d7f69bf5",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:54:41.9",
+      "symbol": "540903",
+      "company": "CRP Risk Management Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/5af38dd7-597c-48cd-bfbc-40f52ea1c456.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:b32de5e0-0c2e-4802-9c78-4c42d7f69bf5",
+          "exchange": "BSE",
+          "announcementKey": "b32de5e0-0c2e-4802-9c78-4c42d7f69bf5",
+          "timestamp": "2026-02-19T11:54:41.9",
+          "symbol": "540903",
+          "company": "CRP Risk Management Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/5af38dd7-597c-48cd-bfbc-40f52ea1c456.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482281900
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539989",
+      "announcementKey": "NSE:106539989",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE474E01029",
+      "timestamp": "19-Feb-2026 11:54:36",
+      "symbol": "BHANDARI",
+      "company": "Bhandari Hosiery Exports Limited",
+      "type": "Record Date",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/BHANDARI_19022026115422_record_date.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539989",
+          "exchange": "NSE",
+          "announcementKey": "106539989",
+          "timestamp": "19-Feb-2026 11:54:36",
+          "symbol": "BHANDARI",
+          "company": "Bhandari Hosiery Exports Limited",
+          "type": "Record Date",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/BHANDARI_19022026115422_record_date.pdf",
+          "isin": "INE474E01029"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771482276000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539988",
+      "announcementKey": "NSE:106539988",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE128X01021",
+      "timestamp": "19-Feb-2026 11:54:34",
+      "symbol": "ACI",
+      "company": "Archean Chemical Industries Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/ARCHEAN_19022026115402_Intimation.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539988",
+          "exchange": "NSE",
+          "announcementKey": "106539988",
+          "timestamp": "19-Feb-2026 11:54:34",
+          "symbol": "ACI",
+          "company": "Archean Chemical Industries Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/ARCHEAN_19022026115402_Intimation.pdf",
+          "isin": "INE128X01021"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771482274000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539987",
+      "announcementKey": "NSE:106539987",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE05AN01011",
+      "timestamp": "19-Feb-2026 11:54:22",
+      "symbol": "HINDWAREAP",
+      "company": "Hindware Home Innovation Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/SHIL_19022026115337_Q3_Intimation_regarding_transcript_of_concall.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539987",
+          "exchange": "NSE",
+          "announcementKey": "106539987",
+          "timestamp": "19-Feb-2026 11:54:22",
+          "symbol": "HINDWAREAP",
+          "company": "Hindware Home Innovation Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/SHIL_19022026115337_Q3_Intimation_regarding_transcript_of_concall.pdf",
+          "isin": "INE05AN01011"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771482262000
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:94a44e34-31d5-45b5-bbba-a475db33dfef",
+      "announcementKey": "BSE:94a44e34-31d5-45b5-bbba-a475db33dfef",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:54:09.403",
+      "symbol": "541929",
+      "company": "Synergy Green Industries Ltd",
+      "type": "AGM/EGM",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/fc8f728a-a1e5-4d93-a069-7ea111309d04.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:94a44e34-31d5-45b5-bbba-a475db33dfef",
+          "exchange": "BSE",
+          "announcementKey": "94a44e34-31d5-45b5-bbba-a475db33dfef",
+          "timestamp": "2026-02-19T11:54:09.403",
+          "symbol": "541929",
+          "company": "Synergy Green Industries Ltd",
+          "type": "AGM/EGM",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/fc8f728a-a1e5-4d93-a069-7ea111309d04.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482249403
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539986",
+      "announcementKey": "NSE:106539986",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE474E01029",
+      "timestamp": "19-Feb-2026 11:53:47",
+      "symbol": "BHANDARI",
+      "company": "Bhandari Hosiery Exports Limited",
+      "type": "Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/BHANDARI_19022026115341_outcome_RI_190226.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539986",
+          "exchange": "NSE",
+          "announcementKey": "106539986",
+          "timestamp": "19-Feb-2026 11:53:47",
+          "symbol": "BHANDARI",
+          "company": "Bhandari Hosiery Exports Limited",
+          "type": "Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/BHANDARI_19022026115341_outcome_RI_190226.pdf",
+          "isin": "INE474E01029"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771482227000
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:a7bfd876-9933-47dc-8f29-22eb8c7ce7b5",
+      "announcementKey": "BSE:a7bfd876-9933-47dc-8f29-22eb8c7ce7b5",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:52:10.777",
+      "symbol": "501301",
+      "company": "Tata Investment Corporation Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/2278580f-350c-4ba0-9bf3-cf61520bc6c5.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:a7bfd876-9933-47dc-8f29-22eb8c7ce7b5",
+          "exchange": "BSE",
+          "announcementKey": "a7bfd876-9933-47dc-8f29-22eb8c7ce7b5",
+          "timestamp": "2026-02-19T11:52:10.777",
+          "symbol": "501301",
+          "company": "Tata Investment Corporation Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/2278580f-350c-4ba0-9bf3-cf61520bc6c5.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482130777
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:79099cb8-9e95-4a9f-a29f-c28953592c16",
+      "announcementKey": "BSE:79099cb8-9e95-4a9f-a29f-c28953592c16",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:51:45.313",
+      "symbol": "500239",
+      "company": "KG Denim Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/4e891478-5d75-41d0-ae3b-a5da7e689afd.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:79099cb8-9e95-4a9f-a29f-c28953592c16",
+          "exchange": "BSE",
+          "announcementKey": "79099cb8-9e95-4a9f-a29f-c28953592c16",
+          "timestamp": "2026-02-19T11:51:45.313",
+          "symbol": "500239",
+          "company": "KG Denim Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/4e891478-5d75-41d0-ae3b-a5da7e689afd.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482105313
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:99be0344-02f9-475a-abc6-1ed8396d8c1d",
+      "announcementKey": "BSE:99be0344-02f9-475a-abc6-1ed8396d8c1d",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:51:20.21",
+      "symbol": "512608",
+      "company": "Bhandari Hosiery Exports Ltd",
+      "type": "Corp. Action",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/e368067e-c20a-4e5b-b766-9a54a64eefbe.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:99be0344-02f9-475a-abc6-1ed8396d8c1d",
+          "exchange": "BSE",
+          "announcementKey": "99be0344-02f9-475a-abc6-1ed8396d8c1d",
+          "timestamp": "2026-02-19T11:51:20.21",
+          "symbol": "512608",
+          "company": "Bhandari Hosiery Exports Ltd",
+          "type": "Corp. Action",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/e368067e-c20a-4e5b-b766-9a54a64eefbe.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482080210
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:be4852f4-3cc2-4087-991b-b6b30ef77d6a",
+      "announcementKey": "BSE:be4852f4-3cc2-4087-991b-b6b30ef77d6a",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:51:20.197",
+      "symbol": "539984",
+      "company": "Hindusthan Urban Infrastructure Ltd",
+      "type": "Corp. Action",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/04eb7b0c-05ce-40ae-a78e-1fa34af28f72.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:be4852f4-3cc2-4087-991b-b6b30ef77d6a",
+          "exchange": "BSE",
+          "announcementKey": "be4852f4-3cc2-4087-991b-b6b30ef77d6a",
+          "timestamp": "2026-02-19T11:51:20.197",
+          "symbol": "539984",
+          "company": "Hindusthan Urban Infrastructure Ltd",
+          "type": "Corp. Action",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/04eb7b0c-05ce-40ae-a78e-1fa34af28f72.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771482080197
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539985",
+      "announcementKey": "NSE:106539985",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE304A01026",
+      "timestamp": "19-Feb-2026 11:50:07",
+      "symbol": "MUKANDLTD",
+      "company": "Mukand Limited",
+      "type": "Shareholders meeting",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/MUKANDLTD_19022026114739_Intimation_of_Postal_Ballot_Notice_Feb_2026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539985",
+          "exchange": "NSE",
+          "announcementKey": "106539985",
+          "timestamp": "19-Feb-2026 11:50:07",
+          "symbol": "MUKANDLTD",
+          "company": "Mukand Limited",
+          "type": "Shareholders meeting",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/MUKANDLTD_19022026114739_Intimation_of_Postal_Ballot_Notice_Feb_2026.pdf",
+          "isin": "INE304A01026"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771482007000
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:ef15b876-10f5-4220-b6c5-be362860aa29",
+      "announcementKey": "BSE:ef15b876-10f5-4220-b6c5-be362860aa29",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:49:54.513",
+      "symbol": "530313",
+      "company": "Kimia Biosciences Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/b74ce252-7092-4593-93e4-ad6780e3efc0.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:ef15b876-10f5-4220-b6c5-be362860aa29",
+          "exchange": "BSE",
+          "announcementKey": "ef15b876-10f5-4220-b6c5-be362860aa29",
+          "timestamp": "2026-02-19T11:49:54.513",
+          "symbol": "530313",
+          "company": "Kimia Biosciences Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/b74ce252-7092-4593-93e4-ad6780e3efc0.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481994513
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:a98528a8-0696-4384-afaa-645251bfa509",
+      "announcementKey": "BSE:a98528a8-0696-4384-afaa-645251bfa509",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:49:36.04",
+      "symbol": "521226",
+      "company": "Uniroyal Industries Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/247edb9e-25a4-41d6-884c-f8bc01de3380.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:a98528a8-0696-4384-afaa-645251bfa509",
+          "exchange": "BSE",
+          "announcementKey": "a98528a8-0696-4384-afaa-645251bfa509",
+          "timestamp": "2026-02-19T11:49:36.04",
+          "symbol": "521226",
+          "company": "Uniroyal Industries Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/247edb9e-25a4-41d6-884c-f8bc01de3380.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481976040
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539984",
+      "announcementKey": "NSE:106539984",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE672A01018",
+      "timestamp": "19-Feb-2026 11:49:36",
+      "symbol": "TATAINVEST",
+      "company": "Tata Investment Corporation Limited",
+      "type": "Copy of Newspaper Publication",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/TATAINVEST_19022026114926_SE_Int.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539984",
+          "exchange": "NSE",
+          "announcementKey": "106539984",
+          "timestamp": "19-Feb-2026 11:49:36",
+          "symbol": "TATAINVEST",
+          "company": "Tata Investment Corporation Limited",
+          "type": "Copy of Newspaper Publication",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/TATAINVEST_19022026114926_SE_Int.pdf",
+          "isin": "INE672A01018"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771481976000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539983",
+      "announcementKey": "NSE:106539983",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE01TY01017",
+      "timestamp": "19-Feb-2026 11:49:08",
+      "symbol": "CANHLIFE",
+      "company": "Canara HSBC Life Insurance Company Limited",
+      "type": "Credit Rating",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/CANARAHSBCLIFE_19022026114729_Credit_Rating_intimation_February_2026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539983",
+          "exchange": "NSE",
+          "announcementKey": "106539983",
+          "timestamp": "19-Feb-2026 11:49:08",
+          "symbol": "CANHLIFE",
+          "company": "Canara HSBC Life Insurance Company Limited",
+          "type": "Credit Rating",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/CANARAHSBCLIFE_19022026114729_Credit_Rating_intimation_February_2026.pdf",
+          "isin": "INE01TY01017"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771481948000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539982",
+      "announcementKey": "NSE:106539982",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE0NAZ01010",
+      "timestamp": "19-Feb-2026 11:48:01",
+      "symbol": "SMARTWORKS",
+      "company": "Smartworks Coworking Spaces Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/SMARTWORKS_19022026114722_Investors_Conference_25_Feb_2026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539982",
+          "exchange": "NSE",
+          "announcementKey": "106539982",
+          "timestamp": "19-Feb-2026 11:48:01",
+          "symbol": "SMARTWORKS",
+          "company": "Smartworks Coworking Spaces Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/SMARTWORKS_19022026114722_Investors_Conference_25_Feb_2026.pdf",
+          "isin": "INE0NAZ01010"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771481881000
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:68ddb8f1-f35b-454b-ae6b-cf4a631a83b3",
+      "announcementKey": "BSE:68ddb8f1-f35b-454b-ae6b-cf4a631a83b3",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:47:02.26",
+      "symbol": "512608",
+      "company": "Bhandari Hosiery Exports Ltd",
+      "type": "Corp. Action",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/d265eba6-c07d-4c28-bd47-9d71bf7eefc3.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:68ddb8f1-f35b-454b-ae6b-cf4a631a83b3",
+          "exchange": "BSE",
+          "announcementKey": "68ddb8f1-f35b-454b-ae6b-cf4a631a83b3",
+          "timestamp": "2026-02-19T11:47:02.26",
+          "symbol": "512608",
+          "company": "Bhandari Hosiery Exports Ltd",
+          "type": "Corp. Action",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/d265eba6-c07d-4c28-bd47-9d71bf7eefc3.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481822260
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:38d35065-8452-4eb4-b950-33337ee2da38",
+      "announcementKey": "BSE:38d35065-8452-4eb4-b950-33337ee2da38",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:45:55.763",
+      "symbol": "544334",
+      "company": "Indobell Insulations Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/c44625d5-0a2b-4500-91c5-b0f8f6791c73.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:38d35065-8452-4eb4-b950-33337ee2da38",
+          "exchange": "BSE",
+          "announcementKey": "38d35065-8452-4eb4-b950-33337ee2da38",
+          "timestamp": "2026-02-19T11:45:55.763",
+          "symbol": "544334",
+          "company": "Indobell Insulations Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/c44625d5-0a2b-4500-91c5-b0f8f6791c73.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481755763
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:243ef826-909c-438a-83e0-5073da970bcb",
+      "announcementKey": "BSE:243ef826-909c-438a-83e0-5073da970bcb",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:45:12.32",
+      "symbol": "544637",
+      "company": "Methodhub Software Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/c5f5dad8-de4a-43e2-bae3-4af7267763fe.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:243ef826-909c-438a-83e0-5073da970bcb",
+          "exchange": "BSE",
+          "announcementKey": "243ef826-909c-438a-83e0-5073da970bcb",
+          "timestamp": "2026-02-19T11:45:12.32",
+          "symbol": "544637",
+          "company": "Methodhub Software Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/c5f5dad8-de4a-43e2-bae3-4af7267763fe.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481712320
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:bd99bb74-22fe-407b-9fea-9e18d77c050f",
+      "announcementKey": "BSE:bd99bb74-22fe-407b-9fea-9e18d77c050f",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:44:04.313",
+      "symbol": "512608",
+      "company": "Bhandari Hosiery Exports Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/020030cf-c428-4fb4-bbcd-a6e2a0b9433e.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:bd99bb74-22fe-407b-9fea-9e18d77c050f",
+          "exchange": "BSE",
+          "announcementKey": "bd99bb74-22fe-407b-9fea-9e18d77c050f",
+          "timestamp": "2026-02-19T11:44:04.313",
+          "symbol": "512608",
+          "company": "Bhandari Hosiery Exports Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/020030cf-c428-4fb4-bbcd-a6e2a0b9433e.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481644313
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:ea0b7cb0-9a08-4052-8249-5db5c7df6f60",
+      "announcementKey": "BSE:ea0b7cb0-9a08-4052-8249-5db5c7df6f60",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:43:09.88",
+      "symbol": "544209",
+      "company": "Bansal Wire Industries Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/830c6d6a-5cba-4ffb-ac47-e4e907cc677f.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:ea0b7cb0-9a08-4052-8249-5db5c7df6f60",
+          "exchange": "BSE",
+          "announcementKey": "ea0b7cb0-9a08-4052-8249-5db5c7df6f60",
+          "timestamp": "2026-02-19T11:43:09.88",
+          "symbol": "544209",
+          "company": "Bansal Wire Industries Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/830c6d6a-5cba-4ffb-ac47-e4e907cc677f.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481589880
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:56ed371f-f7cc-4adc-bbdd-07570a93a99d",
+      "announcementKey": "BSE:56ed371f-f7cc-4adc-bbdd-07570a93a99d",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:42:25.607",
+      "symbol": "544542",
+      "company": "Justo Realfintech Ltd",
+      "type": "Insider Trading / SAST",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/56ED371F_F7CC_4ADC_BBDD_07570A93A99D_114218.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:56ed371f-f7cc-4adc-bbdd-07570a93a99d",
+          "exchange": "BSE",
+          "announcementKey": "56ed371f-f7cc-4adc-bbdd-07570a93a99d",
+          "timestamp": "2026-02-19T11:42:25.607",
+          "symbol": "544542",
+          "company": "Justo Realfintech Ltd",
+          "type": "Insider Trading / SAST",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/56ED371F_F7CC_4ADC_BBDD_07570A93A99D_114218.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481545607
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539942",
+      "announcementKey": "NSE:106539942",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE942G01012",
+      "timestamp": "19-Feb-2026 11:40:37",
+      "symbol": "MCLEODRUSS",
+      "company": "Mcleod Russel India Limited",
+      "type": "Copy of Newspaper Publication",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/MCLEODRUSS_19022026114026_NewspaperAdvertisement.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539942",
+          "exchange": "NSE",
+          "announcementKey": "106539942",
+          "timestamp": "19-Feb-2026 11:40:37",
+          "symbol": "MCLEODRUSS",
+          "company": "Mcleod Russel India Limited",
+          "type": "Copy of Newspaper Publication",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/MCLEODRUSS_19022026114026_NewspaperAdvertisement.pdf",
+          "isin": "INE942G01012"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771481437000
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:a1f13432-a623-43e4-9aa7-152df180b2bc",
+      "announcementKey": "BSE:a1f13432-a623-43e4-9aa7-152df180b2bc",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:40:20.217",
+      "symbol": "538834",
+      "company": "JMJ Fintech Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/bb7fc212-92cc-484d-9484-04de712ce4b5.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:a1f13432-a623-43e4-9aa7-152df180b2bc",
+          "exchange": "BSE",
+          "announcementKey": "a1f13432-a623-43e4-9aa7-152df180b2bc",
+          "timestamp": "2026-02-19T11:40:20.217",
+          "symbol": "538834",
+          "company": "JMJ Fintech Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/bb7fc212-92cc-484d-9484-04de712ce4b5.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481420217
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539941",
+      "announcementKey": "NSE:106539941",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE0B9K01025",
+      "timestamp": "19-Feb-2026 11:40:12",
+      "symbol": "BANSALWIRE",
+      "company": "Bansal Wire Industries Limited",
+      "type": "Action(s) taken or orders passed",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/BANSALWIRE_19022026113918_Regulation_30_Intimation_GST_2020-21.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539941",
+          "exchange": "NSE",
+          "announcementKey": "106539941",
+          "timestamp": "19-Feb-2026 11:40:12",
+          "symbol": "BANSALWIRE",
+          "company": "Bansal Wire Industries Limited",
+          "type": "Action(s) taken or orders passed",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/BANSALWIRE_19022026113918_Regulation_30_Intimation_GST_2020-21.pdf",
+          "isin": "INE0B9K01025"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771481412000
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:31bd0fcd-9b66-44d9-a6e7-ac72fd892635",
+      "announcementKey": "BSE:31bd0fcd-9b66-44d9-a6e7-ac72fd892635",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:39:49.35",
+      "symbol": "532654",
+      "company": "Mcleod Russel India Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/7367fddd-e2a9-4eed-acef-6b7d556945f1.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:31bd0fcd-9b66-44d9-a6e7-ac72fd892635",
+          "exchange": "BSE",
+          "announcementKey": "31bd0fcd-9b66-44d9-a6e7-ac72fd892635",
+          "timestamp": "2026-02-19T11:39:49.35",
+          "symbol": "532654",
+          "company": "Mcleod Russel India Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/7367fddd-e2a9-4eed-acef-6b7d556945f1.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481389350
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:071380b2-d515-409e-a84b-96266201545b",
+      "announcementKey": "BSE:071380b2-d515-409e-a84b-96266201545b",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:39:28.363",
+      "symbol": "532850",
+      "company": "MIC Electronics Ltd",
+      "type": "Insider Trading / SAST",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/071380B2_D515_409E_A84B_96266201545B_113924.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:071380b2-d515-409e-a84b-96266201545b",
+          "exchange": "BSE",
+          "announcementKey": "071380b2-d515-409e-a84b-96266201545b",
+          "timestamp": "2026-02-19T11:39:28.363",
+          "symbol": "532850",
+          "company": "MIC Electronics Ltd",
+          "type": "Insider Trading / SAST",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/071380B2_D515_409E_A84B_96266201545B_113924.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481368363
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:f3d5cb77-8793-4d7d-9240-70342183b33b",
+      "announcementKey": "BSE:f3d5cb77-8793-4d7d-9240-70342183b33b",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:38:15.927",
+      "symbol": "543663",
+      "company": "Five-Star Business Finance Ltd",
+      "type": "Insider Trading / SAST",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/F3D5CB77_8793_4D7D_9240_70342183B33B_113811.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:f3d5cb77-8793-4d7d-9240-70342183b33b",
+          "exchange": "BSE",
+          "announcementKey": "f3d5cb77-8793-4d7d-9240-70342183b33b",
+          "timestamp": "2026-02-19T11:38:15.927",
+          "symbol": "543663",
+          "company": "Five-Star Business Finance Ltd",
+          "type": "Insider Trading / SAST",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/F3D5CB77_8793_4D7D_9240_70342183B33B_113811.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481295927
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:89f56e3b-b617-4fc6-ba40-d5bbe7ac4c25",
+      "announcementKey": "BSE:89f56e3b-b617-4fc6-ba40-d5bbe7ac4c25",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:36:15.2",
+      "symbol": "530217",
+      "company": "Swojas Foods Ltd",
+      "type": "Insider Trading / SAST",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/89F56E3B_B617_4FC6_BA40_D5BBE7AC4C25_113609.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:89f56e3b-b617-4fc6-ba40-d5bbe7ac4c25",
+          "exchange": "BSE",
+          "announcementKey": "89f56e3b-b617-4fc6-ba40-d5bbe7ac4c25",
+          "timestamp": "2026-02-19T11:36:15.2",
+          "symbol": "530217",
+          "company": "Swojas Foods Ltd",
+          "type": "Insider Trading / SAST",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/89F56E3B_B617_4FC6_BA40_D5BBE7AC4C25_113609.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481175200
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539940",
+      "announcementKey": "NSE:106539940",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE0BTI01029",
+      "timestamp": "19-Feb-2026 11:36:11",
+      "symbol": "KAMOPAINTS",
+      "company": "Kamdhenu Ventures Limited",
+      "type": "Shareholders meeting",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/KVENTURES_19022026113539_finalnoticesigned.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539940",
+          "exchange": "NSE",
+          "announcementKey": "106539940",
+          "timestamp": "19-Feb-2026 11:36:11",
+          "symbol": "KAMOPAINTS",
+          "company": "Kamdhenu Ventures Limited",
+          "type": "Shareholders meeting",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/KVENTURES_19022026113539_finalnoticesigned.pdf",
+          "isin": "INE0BTI01029"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771481171000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539939",
+      "announcementKey": "NSE:106539939",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE0B9K01025",
+      "timestamp": "19-Feb-2026 11:35:14",
+      "symbol": "BANSALWIRE",
+      "company": "Bansal Wire Industries Limited",
+      "type": "Action(s) taken or orders passed",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/BANSALWIRE_19022026113456_Regulation_30_Intimation_GST_19-20.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539939",
+          "exchange": "NSE",
+          "announcementKey": "106539939",
+          "timestamp": "19-Feb-2026 11:35:14",
+          "symbol": "BANSALWIRE",
+          "company": "Bansal Wire Industries Limited",
+          "type": "Action(s) taken or orders passed",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/BANSALWIRE_19022026113456_Regulation_30_Intimation_GST_19-20.pdf",
+          "isin": "INE0B9K01025"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771481114000
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:936a809d-5352-4c51-86be-6416c508f853",
+      "announcementKey": "BSE:936a809d-5352-4c51-86be-6416c508f853",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:34:59.347",
+      "symbol": "544203",
+      "company": "Allied Blenders and Distillers Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/2cb50654-2cec-4e84-abe4-a590f19b23a0.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:936a809d-5352-4c51-86be-6416c508f853",
+          "exchange": "BSE",
+          "announcementKey": "936a809d-5352-4c51-86be-6416c508f853",
+          "timestamp": "2026-02-19T11:34:59.347",
+          "symbol": "544203",
+          "company": "Allied Blenders and Distillers Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/2cb50654-2cec-4e84-abe4-a590f19b23a0.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481099347
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:789a23c5-11b7-46b8-8b0b-0a9184dc584a",
+      "announcementKey": "BSE:789a23c5-11b7-46b8-8b0b-0a9184dc584a",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:33:33.357",
+      "symbol": "521226",
+      "company": "Uniroyal Industries Ltd",
+      "type": "Insider Trading / SAST",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/789A23C5_11B7_46B8_8B0B_0A9184DC584A_113329.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:789a23c5-11b7-46b8-8b0b-0a9184dc584a",
+          "exchange": "BSE",
+          "announcementKey": "789a23c5-11b7-46b8-8b0b-0a9184dc584a",
+          "timestamp": "2026-02-19T11:33:33.357",
+          "symbol": "521226",
+          "company": "Uniroyal Industries Ltd",
+          "type": "Insider Trading / SAST",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/789A23C5_11B7_46B8_8B0B_0A9184DC584A_113329.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771481013357
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539938",
+      "announcementKey": "NSE:106539938",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE998I01010",
+      "timestamp": "19-Feb-2026 11:33:27",
+      "symbol": "MHRIL",
+      "company": "Mahindra Holidays & Resorts India Limited",
+      "type": "Press Release",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/MHRIL_19022026113257_SE_Intimation_with_press_release_Final_Signed.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539938",
+          "exchange": "NSE",
+          "announcementKey": "106539938",
+          "timestamp": "19-Feb-2026 11:33:27",
+          "symbol": "MHRIL",
+          "company": "Mahindra Holidays & Resorts India Limited",
+          "type": "Press Release",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/MHRIL_19022026113257_SE_Intimation_with_press_release_Final_Signed.pdf",
+          "isin": "INE998I01010"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771481007000
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:e388dbfa-a92d-4ec0-aef8-1c80e6ad72ac",
+      "announcementKey": "BSE:e388dbfa-a92d-4ec0-aef8-1c80e6ad72ac",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:33:15.547",
+      "symbol": "533088",
+      "company": "Mahindra Holidays & Resorts India Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/79639f41-4d3b-4af2-bd04-ff186b63f5c4.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:e388dbfa-a92d-4ec0-aef8-1c80e6ad72ac",
+          "exchange": "BSE",
+          "announcementKey": "e388dbfa-a92d-4ec0-aef8-1c80e6ad72ac",
+          "timestamp": "2026-02-19T11:33:15.547",
+          "symbol": "533088",
+          "company": "Mahindra Holidays & Resorts India Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/79639f41-4d3b-4af2-bd04-ff186b63f5c4.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771480995547
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:49763527-16a2-4079-909e-a5e3a5d1bc0e",
+      "announcementKey": "BSE:49763527-16a2-4079-909e-a5e3a5d1bc0e",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:32:38.427",
+      "symbol": "540727",
+      "company": "Poojawestern Metaliks Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/ab4b1371-e589-4320-aad2-a88781a8434d.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:49763527-16a2-4079-909e-a5e3a5d1bc0e",
+          "exchange": "BSE",
+          "announcementKey": "49763527-16a2-4079-909e-a5e3a5d1bc0e",
+          "timestamp": "2026-02-19T11:32:38.427",
+          "symbol": "540727",
+          "company": "Poojawestern Metaliks Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/ab4b1371-e589-4320-aad2-a88781a8434d.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771480958427
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:9f43d909-a84e-4a79-8395-beff37ff4b79",
+      "announcementKey": "BSE:9f43d909-a84e-4a79-8395-beff37ff4b79",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:32:26.977",
+      "symbol": "521226",
+      "company": "Uniroyal Industries Ltd",
+      "type": "Insider Trading / SAST",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/9F43D909_A84E_4A79_8395_BEFF37FF4B79_113215.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:9f43d909-a84e-4a79-8395-beff37ff4b79",
+          "exchange": "BSE",
+          "announcementKey": "9f43d909-a84e-4a79-8395-beff37ff4b79",
+          "timestamp": "2026-02-19T11:32:26.977",
+          "symbol": "521226",
+          "company": "Uniroyal Industries Ltd",
+          "type": "Insider Trading / SAST",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/9F43D909_A84E_4A79_8395_BEFF37FF4B79_113215.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771480946977
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:0e91e29b-a0e8-4ff1-95ad-7b0a39011865",
+      "announcementKey": "BSE:0e91e29b-a0e8-4ff1-95ad-7b0a39011865",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:32:21.32",
+      "symbol": "543747",
+      "company": "Kamdhenu Ventures Ltd",
+      "type": "AGM/EGM",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/6a2aa5dd-1c90-4831-9bc6-9c01c690bbd2.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:0e91e29b-a0e8-4ff1-95ad-7b0a39011865",
+          "exchange": "BSE",
+          "announcementKey": "0e91e29b-a0e8-4ff1-95ad-7b0a39011865",
+          "timestamp": "2026-02-19T11:32:21.32",
+          "symbol": "543747",
+          "company": "Kamdhenu Ventures Ltd",
+          "type": "AGM/EGM",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/6a2aa5dd-1c90-4831-9bc6-9c01c690bbd2.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771480941320
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539937",
+      "announcementKey": "NSE:106539937",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE285A01027",
+      "timestamp": "19-Feb-2026 11:32:09",
+      "symbol": "ELGIEQUIP",
+      "company": "Elgi Equipments Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/ELGIEQUIP_19022026112931_AnnualInvestorConcallintimation26022026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539937",
+          "exchange": "NSE",
+          "announcementKey": "106539937",
+          "timestamp": "19-Feb-2026 11:32:09",
+          "symbol": "ELGIEQUIP",
+          "company": "Elgi Equipments Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/ELGIEQUIP_19022026112931_AnnualInvestorConcallintimation26022026.pdf",
+          "isin": "INE285A01027"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771480929000
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:d9789461-de0e-4ce2-9218-66166504d735",
+      "announcementKey": "BSE:d9789461-de0e-4ce2-9218-66166504d735",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:32:04.57",
+      "symbol": "508905",
+      "company": "Nexome Capital Markets Ltd",
+      "type": "Company Update",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/6e455475-8391-4c4e-b45e-9a3ac02eef65.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:d9789461-de0e-4ce2-9218-66166504d735",
+          "exchange": "BSE",
+          "announcementKey": "d9789461-de0e-4ce2-9218-66166504d735",
+          "timestamp": "2026-02-19T11:32:04.57",
+          "symbol": "508905",
+          "company": "Nexome Capital Markets Ltd",
+          "type": "Company Update",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/6e455475-8391-4c4e-b45e-9a3ac02eef65.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771480924570
+    },
+    {
+      "exchange": "BSE",
+      "exchanges": [
+        "BSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "BSE:c810a2da-0276-40ef-ae70-dc1594186e45",
+      "announcementKey": "BSE:c810a2da-0276-40ef-ae70-dc1594186e45",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": null,
+      "timestamp": "2026-02-19T11:31:06.473",
+      "symbol": "534535",
+      "company": "String Metaverse Ltd",
+      "type": "AGM/EGM",
+      "attachment_url": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/1ee19784-4c18-4f51-a7df-7e111c0753da.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "BSE:c810a2da-0276-40ef-ae70-dc1594186e45",
+          "exchange": "BSE",
+          "announcementKey": "c810a2da-0276-40ef-ae70-dc1594186e45",
+          "timestamp": "2026-02-19T11:31:06.473",
+          "symbol": "534535",
+          "company": "String Metaverse Ltd",
+          "type": "AGM/EGM",
+          "attachmentUrl": "https://www.bseindia.com/xml-data/corpfiling/AttachLive/1ee19784-4c18-4f51-a7df-7e111c0753da.pdf",
+          "isin": null
+        }
+      ],
+      "insertedAt": "2026-02-19T07:02:36.019Z",
+      "sortTimestampMs": 1771480866473
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539936",
+      "announcementKey": "NSE:106539936",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE188Y01015",
+      "timestamp": "19-Feb-2026 11:30:08",
+      "symbol": "VERTOZ",
+      "company": "Vertoz Limited",
+      "type": "Press Release",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/VERTOZ_19022026112955_PR_stamped_sd.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539936",
+          "exchange": "NSE",
+          "announcementKey": "106539936",
+          "timestamp": "19-Feb-2026 11:30:08",
+          "symbol": "VERTOZ",
+          "company": "Vertoz Limited",
+          "type": "Press Release",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/VERTOZ_19022026112955_PR_stamped_sd.pdf",
+          "isin": "INE188Y01015"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771480808000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539935",
+      "announcementKey": "NSE:106539935",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE148O01028",
+      "timestamp": "19-Feb-2026 11:26:04",
+      "symbol": "DELHIVERY",
+      "company": "Delhivery Limited",
+      "type": "Press Release",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/DELHIVERYLTD_19022026112308_Press_Release_Builds_AI_powered_location_intelligence_Sd.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539935",
+          "exchange": "NSE",
+          "announcementKey": "106539935",
+          "timestamp": "19-Feb-2026 11:26:04",
+          "symbol": "DELHIVERY",
+          "company": "Delhivery Limited",
+          "type": "Press Release",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/DELHIVERYLTD_19022026112308_Press_Release_Builds_AI_powered_location_intelligence_Sd.pdf",
+          "isin": "INE148O01028"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771480564000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539934",
+      "announcementKey": "NSE:106539934",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE552Z01027",
+      "timestamp": "19-Feb-2026 11:24:19",
+      "symbol": "ABDL",
+      "company": "Allied Blenders and Distillers Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/ABDINDIA_19022026112240_SE_Intimation_Entrepreneurial_India_Conference_sd.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539934",
+          "exchange": "NSE",
+          "announcementKey": "106539934",
+          "timestamp": "19-Feb-2026 11:24:19",
+          "symbol": "ABDL",
+          "company": "Allied Blenders and Distillers Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/ABDINDIA_19022026112240_SE_Intimation_Entrepreneurial_India_Conference_sd.pdf",
+          "isin": "INE552Z01027"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771480459000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539925",
+      "announcementKey": "NSE:106539925",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE388A01029",
+      "timestamp": "19-Feb-2026 11:22:11",
+      "symbol": "GANESHBE",
+      "company": "Ganesh Benzoplast Limited",
+      "type": "Investor Presentation",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/GANESHBE_19022026112156_InvestorPresentationFebruary2026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539925",
+          "exchange": "NSE",
+          "announcementKey": "106539925",
+          "timestamp": "19-Feb-2026 11:22:11",
+          "symbol": "GANESHBE",
+          "company": "Ganesh Benzoplast Limited",
+          "type": "Investor Presentation",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/GANESHBE_19022026112156_InvestorPresentationFebruary2026.pdf",
+          "isin": "INE388A01029"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771480331000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539924",
+      "announcementKey": "NSE:106539924",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE208A01029",
+      "timestamp": "19-Feb-2026 11:21:16",
+      "symbol": "ASHOKLEY",
+      "company": "Ashok Leyland Limited",
+      "type": "Other Restructuring",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/ASHOKLEY_19022026112100_80AL_IntimationofclosureofALWA.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539924",
+          "exchange": "NSE",
+          "announcementKey": "106539924",
+          "timestamp": "19-Feb-2026 11:21:16",
+          "symbol": "ASHOKLEY",
+          "company": "Ashok Leyland Limited",
+          "type": "Other Restructuring",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/ASHOKLEY_19022026112100_80AL_IntimationofclosureofALWA.pdf",
+          "isin": "INE208A01029"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771480276000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539923",
+      "announcementKey": "NSE:106539923",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE344T01014",
+      "timestamp": "19-Feb-2026 11:20:56",
+      "symbol": "BELLACASA",
+      "company": "Bella Casa Fashion & Retail Limited",
+      "type": "Resignation of Independent director",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/BELLACASA_ROID_79475_KMP_Doc.zip",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539923",
+          "exchange": "NSE",
+          "announcementKey": "106539923",
+          "timestamp": "19-Feb-2026 11:20:56",
+          "symbol": "BELLACASA",
+          "company": "Bella Casa Fashion & Retail Limited",
+          "type": "Resignation of Independent director",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/BELLACASA_ROID_79475_KMP_Doc.zip",
+          "isin": "INE344T01014"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771480256000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539922",
+      "announcementKey": "NSE:106539922",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE813A01018",
+      "timestamp": "19-Feb-2026 11:20:03",
+      "symbol": "MAHLIFE",
+      "company": "Mahindra Lifespace Developers Limited",
+      "type": "Credit Rating- New",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/MAHLIFE1_19022026111925_IntimationofCreditRating.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539922",
+          "exchange": "NSE",
+          "announcementKey": "106539922",
+          "timestamp": "19-Feb-2026 11:20:03",
+          "symbol": "MAHLIFE",
+          "company": "Mahindra Lifespace Developers Limited",
+          "type": "Credit Rating- New",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/MAHLIFE1_19022026111925_IntimationofCreditRating.pdf",
+          "isin": "INE813A01018"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771480203000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539920",
+      "announcementKey": "NSE:106539920",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE908D01010",
+      "timestamp": "19-Feb-2026 11:18:24",
+      "symbol": "SHAKTIPUMP",
+      "company": "Shakti Pumps (India) Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/SHAKTIPUMP_19022026111745_SubmissionofEarningTranscript.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539920",
+          "exchange": "NSE",
+          "announcementKey": "106539920",
+          "timestamp": "19-Feb-2026 11:18:24",
+          "symbol": "SHAKTIPUMP",
+          "company": "Shakti Pumps (India) Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/SHAKTIPUMP_19022026111745_SubmissionofEarningTranscript.pdf",
+          "isin": "INE908D01010"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771480104000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539919",
+      "announcementKey": "NSE:106539919",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE497B01018",
+      "timestamp": "19-Feb-2026 11:15:44",
+      "symbol": "SEAMECLTD",
+      "company": "Seamec Limited",
+      "type": "Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/SEAMECLTD_19022026111534_BSENSESEAMECPRINCESSofhire19022026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539919",
+          "exchange": "NSE",
+          "announcementKey": "106539919",
+          "timestamp": "19-Feb-2026 11:15:44",
+          "symbol": "SEAMECLTD",
+          "company": "Seamec Limited",
+          "type": "Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/SEAMECLTD_19022026111534_BSENSESEAMECPRINCESSofhire19022026.pdf",
+          "isin": "INE497B01018"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771479944000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539918",
+      "announcementKey": "NSE:106539918",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE324L01013",
+      "timestamp": "19-Feb-2026 11:11:36",
+      "symbol": "RPPINFRA",
+      "company": "R.P.P. Infra Projects Limited",
+      "type": "Bagging/Receiving of orders/contracts",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/RPPINFRA_19022026111122_Reg_30_RPP_Work_order.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539918",
+          "exchange": "NSE",
+          "announcementKey": "106539918",
+          "timestamp": "19-Feb-2026 11:11:36",
+          "symbol": "RPPINFRA",
+          "company": "R.P.P. Infra Projects Limited",
+          "type": "Bagging/Receiving of orders/contracts",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/RPPINFRA_19022026111122_Reg_30_RPP_Work_order.pdf",
+          "isin": "INE324L01013"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771479696000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539917",
+      "announcementKey": "NSE:106539917",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE520Y01019",
+      "timestamp": "19-Feb-2026 11:10:43",
+      "symbol": "ICEMAKE",
+      "company": "Ice Make Refrigeration Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/ICEMAKE_19022026110713_NSETranscript.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539917",
+          "exchange": "NSE",
+          "announcementKey": "106539917",
+          "timestamp": "19-Feb-2026 11:10:43",
+          "symbol": "ICEMAKE",
+          "company": "Ice Make Refrigeration Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/ICEMAKE_19022026110713_NSETranscript.pdf",
+          "isin": "INE520Y01019"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771479643000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539911",
+      "announcementKey": "NSE:106539911",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE927C01020",
+      "timestamp": "19-Feb-2026 11:06:59",
+      "symbol": "DIGISPICE",
+      "company": "DiGiSPICE Technologies Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/DIGISPICE_19022026110549_InvestorpresentationIntimationfeb2026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539911",
+          "exchange": "NSE",
+          "announcementKey": "106539911",
+          "timestamp": "19-Feb-2026 11:06:59",
+          "symbol": "DIGISPICE",
+          "company": "DiGiSPICE Technologies Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/DIGISPICE_19022026110549_InvestorpresentationIntimationfeb2026.pdf",
+          "isin": "INE927C01020"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771479419000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539910",
+      "announcementKey": "NSE:106539910",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE666D01022",
+      "timestamp": "19-Feb-2026 11:05:13",
+      "symbol": "BORORENEW",
+      "company": "BOROSIL RENEWABLES LIMITED",
+      "type": "Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/BORORENEW11_19022026110337_Intimation_MediaInteraction.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539910",
+          "exchange": "NSE",
+          "announcementKey": "106539910",
+          "timestamp": "19-Feb-2026 11:05:13",
+          "symbol": "BORORENEW",
+          "company": "BOROSIL RENEWABLES LIMITED",
+          "type": "Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/BORORENEW11_19022026110337_Intimation_MediaInteraction.pdf",
+          "isin": "INE666D01022"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771479313000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539909",
+      "announcementKey": "NSE:106539909",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE0Y8W01017",
+      "timestamp": "19-Feb-2026 11:04:02",
+      "symbol": "AHCL",
+      "company": "Anlon Healthcare Limited",
+      "type": "Investor Presentation",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/ANLON2013_19022026110354_AHLInvestorPresentaion19022026Signed.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539909",
+          "exchange": "NSE",
+          "announcementKey": "106539909",
+          "timestamp": "19-Feb-2026 11:04:02",
+          "symbol": "AHCL",
+          "company": "Anlon Healthcare Limited",
+          "type": "Investor Presentation",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/ANLON2013_19022026110354_AHLInvestorPresentaion19022026Signed.pdf",
+          "isin": "INE0Y8W01017"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771479242000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539904",
+      "announcementKey": "NSE:106539904",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE423Y01016",
+      "timestamp": "19-Feb-2026 10:54:31",
+      "symbol": "SBFC",
+      "company": "SBFC Finance Limited",
+      "type": "Allotment of Securities",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/SBFC_19022026105336_NSEBSEESOP.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539904",
+          "exchange": "NSE",
+          "announcementKey": "106539904",
+          "timestamp": "19-Feb-2026 10:54:31",
+          "symbol": "SBFC",
+          "company": "SBFC Finance Limited",
+          "type": "Allotment of Securities",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/SBFC_19022026105336_NSEBSEESOP.pdf",
+          "isin": "INE423Y01016"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771478671000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539903",
+      "announcementKey": "NSE:106539903",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE852O01025",
+      "timestamp": "19-Feb-2026 10:52:50",
+      "symbol": "APTUS",
+      "company": "Aptus Value Housing Finance India Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/APTUS_19022026105212_Aptus_Investor_Meeting_Intimation_February_19_2026_sd.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539903",
+          "exchange": "NSE",
+          "announcementKey": "106539903",
+          "timestamp": "19-Feb-2026 10:52:50",
+          "symbol": "APTUS",
+          "company": "Aptus Value Housing Finance India Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/APTUS_19022026105212_Aptus_Investor_Meeting_Intimation_February_19_2026_sd.pdf",
+          "isin": "INE852O01025"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771478570000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539902",
+      "announcementKey": "NSE:106539902",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE625X01018",
+      "timestamp": "19-Feb-2026 10:47:28",
+      "symbol": "SILVERTUC",
+      "company": "Silver Touch Technologies Limited",
+      "type": "Record Date",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/SILVERTUC_19022026104708_Intimation_of_Record_Date_signed.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539902",
+          "exchange": "NSE",
+          "announcementKey": "106539902",
+          "timestamp": "19-Feb-2026 10:47:28",
+          "symbol": "SILVERTUC",
+          "company": "Silver Touch Technologies Limited",
+          "type": "Record Date",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/SILVERTUC_19022026104708_Intimation_of_Record_Date_signed.pdf",
+          "isin": "INE625X01018"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771478248000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539897",
+      "announcementKey": "NSE:106539897",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE741K01010",
+      "timestamp": "19-Feb-2026 10:43:57",
+      "symbol": "CREDITACC",
+      "company": "CREDITACCESS GRAMEEN LIMITED",
+      "type": "ESOP/ESOS/ESPS",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/CREDITACC_19022026104342_CAGL_SE_ESOPAllotment_19022026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539897",
+          "exchange": "NSE",
+          "announcementKey": "106539897",
+          "timestamp": "19-Feb-2026 10:43:57",
+          "symbol": "CREDITACC",
+          "company": "CREDITACCESS GRAMEEN LIMITED",
+          "type": "ESOP/ESOS/ESPS",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/CREDITACC_19022026104342_CAGL_SE_ESOPAllotment_19022026.pdf",
+          "isin": "INE741K01010"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771478037000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539893",
+      "announcementKey": "NSE:106539893",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE625X01018",
+      "timestamp": "19-Feb-2026 10:42:40",
+      "symbol": "SILVERTUC",
+      "company": "Silver Touch Technologies Limited",
+      "type": "Shareholders meeting",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/SILVERTUC_19022026104230_Outcome_of_PBsigned.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539893",
+          "exchange": "NSE",
+          "announcementKey": "106539893",
+          "timestamp": "19-Feb-2026 10:42:40",
+          "symbol": "SILVERTUC",
+          "company": "Silver Touch Technologies Limited",
+          "type": "Shareholders meeting",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/SILVERTUC_19022026104230_Outcome_of_PBsigned.pdf",
+          "isin": "INE625X01018"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771477960000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539892",
+      "announcementKey": "NSE:106539892",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE625X01018",
+      "timestamp": "19-Feb-2026 10:38:30",
+      "symbol": "SILVERTUC",
+      "company": "Silver Touch Technologies Limited",
+      "type": "Shareholders meeting",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/SILVERTUC_19022026103819_Outcome_of_PBsigned.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539892",
+          "exchange": "NSE",
+          "announcementKey": "106539892",
+          "timestamp": "19-Feb-2026 10:38:30",
+          "symbol": "SILVERTUC",
+          "company": "Silver Touch Technologies Limited",
+          "type": "Shareholders meeting",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/SILVERTUC_19022026103819_Outcome_of_PBsigned.pdf",
+          "isin": "INE625X01018"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771477710000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539891",
+      "announcementKey": "NSE:106539891",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE09XN01023",
+      "timestamp": "19-Feb-2026 10:29:47",
+      "symbol": "AKUMS",
+      "company": "Akums Drugs and Pharmaceuticals Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/NSEAKUMS10_19022026102925_AKUMS19022026final.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539891",
+          "exchange": "NSE",
+          "announcementKey": "106539891",
+          "timestamp": "19-Feb-2026 10:29:47",
+          "symbol": "AKUMS",
+          "company": "Akums Drugs and Pharmaceuticals Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/NSEAKUMS10_19022026102925_AKUMS19022026final.pdf",
+          "isin": "INE09XN01023"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771477187000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539834",
+      "announcementKey": "NSE:106539834",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE09XN01023",
+      "timestamp": "19-Feb-2026 10:18:23",
+      "symbol": "AKUMS",
+      "company": "Akums Drugs and Pharmaceuticals Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/NSEAKUMS10_19022026101813_AKUMS19022026final.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539834",
+          "exchange": "NSE",
+          "announcementKey": "106539834",
+          "timestamp": "19-Feb-2026 10:18:23",
+          "symbol": "AKUMS",
+          "company": "Akums Drugs and Pharmaceuticals Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/NSEAKUMS10_19022026101813_AKUMS19022026final.pdf",
+          "isin": "INE09XN01023"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771476503000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539833",
+      "announcementKey": "NSE:106539833",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE172A01027",
+      "timestamp": "19-Feb-2026 10:12:30",
+      "symbol": "CASTROLIND",
+      "company": "Castrol India Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/CASTROLINDIA_19022026101139_CL_SE_Intimation_Conference_Call_24Feb2026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539833",
+          "exchange": "NSE",
+          "announcementKey": "106539833",
+          "timestamp": "19-Feb-2026 10:12:30",
+          "symbol": "CASTROLIND",
+          "company": "Castrol India Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/CASTROLINDIA_19022026101139_CL_SE_Intimation_Conference_Call_24Feb2026.pdf",
+          "isin": "INE172A01027"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771476150000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539832",
+      "announcementKey": "NSE:106539832",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE852O01025",
+      "timestamp": "19-Feb-2026 10:08:51",
+      "symbol": "APTUS",
+      "company": "Aptus Value Housing Finance India Limited",
+      "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/APTUS_19022026100828_Aptus_Investor_Meeting_Intimation_February_18_2026sd.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539832",
+          "exchange": "NSE",
+          "announcementKey": "106539832",
+          "timestamp": "19-Feb-2026 10:08:51",
+          "symbol": "APTUS",
+          "company": "Aptus Value Housing Finance India Limited",
+          "type": "Analysts/Institutional Investor Meet/Con. Call Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/APTUS_19022026100828_Aptus_Investor_Meeting_Intimation_February_18_2026sd.pdf",
+          "isin": "INE852O01025"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771475931000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539831",
+      "announcementKey": "NSE:106539831",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE481N01025",
+      "timestamp": "19-Feb-2026 10:06:21",
+      "symbol": "HOMEFIRST",
+      "company": "Home First Finance Company India Limited",
+      "type": "General Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/HOMEFIRST_19022026100608_ESOP18022026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539831",
+          "exchange": "NSE",
+          "announcementKey": "106539831",
+          "timestamp": "19-Feb-2026 10:06:21",
+          "symbol": "HOMEFIRST",
+          "company": "Home First Finance Company India Limited",
+          "type": "General Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/HOMEFIRST_19022026100608_ESOP18022026.pdf",
+          "isin": "INE481N01025"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771475781000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539799",
+      "announcementKey": "NSE:106539799",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE010B01027",
+      "timestamp": "19-Feb-2026 09:50:36",
+      "symbol": "ZYDUSLIFE",
+      "company": "Zydus Lifesciences Limited",
+      "type": "Press Release",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/Cadilahc_19022026094949_PressRelease19022026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539799",
+          "exchange": "NSE",
+          "announcementKey": "106539799",
+          "timestamp": "19-Feb-2026 09:50:36",
+          "symbol": "ZYDUSLIFE",
+          "company": "Zydus Lifesciences Limited",
+          "type": "Press Release",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/Cadilahc_19022026094949_PressRelease19022026.pdf",
+          "isin": "INE010B01027"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771474836000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539758",
+      "announcementKey": "NSE:106539758",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE056I01017",
+      "timestamp": "19-Feb-2026 09:24:00",
+      "symbol": "REFEX",
+      "company": "Refex Industries Limited",
+      "type": "General Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/REFEX2002_19022026092325_RIL_STX_SAT_Stay_Order_Sd.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539758",
+          "exchange": "NSE",
+          "announcementKey": "106539758",
+          "timestamp": "19-Feb-2026 09:24:00",
+          "symbol": "REFEX",
+          "company": "Refex Industries Limited",
+          "type": "General Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/REFEX2002_19022026092325_RIL_STX_SAT_Stay_Order_Sd.pdf",
+          "isin": "INE056I01017"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771473240000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539757",
+      "announcementKey": "NSE:106539757",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE056I01017",
+      "timestamp": "19-Feb-2026 09:14:07",
+      "symbol": "REFEX",
+      "company": "Refex Industries Limited",
+      "type": "Rumour Verification - Regulation 30(11)",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/REFEX2002_19022026091348_RIL_STX_Intimation_IT_Search_RTI_Response_Sd.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539757",
+          "exchange": "NSE",
+          "announcementKey": "106539757",
+          "timestamp": "19-Feb-2026 09:14:07",
+          "symbol": "REFEX",
+          "company": "Refex Industries Limited",
+          "type": "Rumour Verification - Regulation 30(11)",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/REFEX2002_19022026091348_RIL_STX_Intimation_IT_Search_RTI_Response_Sd.pdf",
+          "isin": "INE056I01017"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771472647000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539756",
+      "announcementKey": "NSE:106539756",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE066P01011",
+      "timestamp": "19-Feb-2026 09:01:22",
+      "symbol": "INOXWIND",
+      "company": "Inox Wind Limited",
+      "type": "Press Release",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/INOXWIND_19022026090105_IWL_PRforIGESL.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539756",
+          "exchange": "NSE",
+          "announcementKey": "106539756",
+          "timestamp": "19-Feb-2026 09:01:22",
+          "symbol": "INOXWIND",
+          "company": "Inox Wind Limited",
+          "type": "Press Release",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/INOXWIND_19022026090105_IWL_PRforIGESL.pdf",
+          "isin": "INE066P01011"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771471882000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539741",
+      "announcementKey": "NSE:106539741",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE510W01014",
+      "timestamp": "19-Feb-2026 08:50:59",
+      "symbol": "INOXGREEN",
+      "company": "Inox Green Energy Services Limited",
+      "type": "Press Release",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/IGESL_19022026085010_IGESL__PR_STXfinal_dsc.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539741",
+          "exchange": "NSE",
+          "announcementKey": "106539741",
+          "timestamp": "19-Feb-2026 08:50:59",
+          "symbol": "INOXGREEN",
+          "company": "Inox Green Energy Services Limited",
+          "type": "Press Release",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/IGESL_19022026085010_IGESL__PR_STXfinal_dsc.pdf",
+          "isin": "INE510W01014"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771471259000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539722",
+      "announcementKey": "NSE:106539722",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE510W01014",
+      "timestamp": "19-Feb-2026 08:46:33",
+      "symbol": "INOXGREEN",
+      "company": "Inox Green Energy Services Limited",
+      "type": "General Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/IGESL_19022026083536_IGESL_Reg30_WWIL_dsc.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539722",
+          "exchange": "NSE",
+          "announcementKey": "106539722",
+          "timestamp": "19-Feb-2026 08:46:33",
+          "symbol": "INOXGREEN",
+          "company": "Inox Green Energy Services Limited",
+          "type": "General Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/IGESL_19022026083536_IGESL_Reg30_WWIL_dsc.pdf",
+          "isin": "INE510W01014"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771470993000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539721",
+      "announcementKey": "NSE:106539721",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE622W01025",
+      "timestamp": "19-Feb-2026 08:42:40",
+      "symbol": "ACMESOLAR",
+      "company": "Acme Solar Holdings Limited",
+      "type": "Bagging/Receiving of orders/contracts",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/ACME122002_19022026084218_Intimation19022026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539721",
+          "exchange": "NSE",
+          "announcementKey": "106539721",
+          "timestamp": "19-Feb-2026 08:42:40",
+          "symbol": "ACMESOLAR",
+          "company": "Acme Solar Holdings Limited",
+          "type": "Bagging/Receiving of orders/contracts",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/ACME122002_19022026084218_Intimation19022026.pdf",
+          "isin": "INE622W01025"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771470760000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539695",
+      "announcementKey": "NSE:106539695",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE467B01029",
+      "timestamp": "19-Feb-2026 08:20:10",
+      "symbol": "TCS",
+      "company": "Tata Consultancy Services Limited",
+      "type": "Updates",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/TCS_CORPCS_19022026081906_PR_19Feb26_signed.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539695",
+          "exchange": "NSE",
+          "announcementKey": "106539695",
+          "timestamp": "19-Feb-2026 08:20:10",
+          "symbol": "TCS",
+          "company": "Tata Consultancy Services Limited",
+          "type": "Updates",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/TCS_CORPCS_19022026081906_PR_19Feb26_signed.pdf",
+          "isin": "INE467B01029"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771469410000
+    },
+    {
+      "exchange": "NSE",
+      "exchanges": [
+        "NSE"
+      ],
+      "mergedFromCount": 1,
+      "mergedAnnouncementKey": "NSE:106539694",
+      "announcementKey": "NSE:106539694",
+      "dedupeStrategy": "snapshot-fallback",
+      "isin": "INE854D01024",
+      "timestamp": "19-Feb-2026 08:02:27",
+      "symbol": "UNITDSPR",
+      "company": "United Spirits Limited",
+      "type": "Change in Management",
+      "attachment_url": "https://nsearchives.nseindia.com/corporate/MCDOWELL_19022026080208_USL19022026.pdf",
+      "sourceAnnouncements": [
+        {
+          "sourceKey": "NSE:106539694",
+          "exchange": "NSE",
+          "announcementKey": "106539694",
+          "timestamp": "19-Feb-2026 08:02:27",
+          "symbol": "UNITDSPR",
+          "company": "United Spirits Limited",
+          "type": "Change in Management",
+          "attachmentUrl": "https://nsearchives.nseindia.com/corporate/MCDOWELL_19022026080208_USL19022026.pdf",
+          "isin": "INE854D01024"
+        }
+      ],
+      "insertedAt": "2026-02-19T06:31:30.602Z",
+      "sortTimestampMs": 1771468347000
+    }
+  ]
+}
