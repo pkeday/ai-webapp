@@ -161,7 +161,13 @@
                   <input id="notifications-symbol-input" type="text" placeholder="Example: TCS" />
                 </label>
                 <label>
-                  Limit
+                  AI label filter
+                  <select id="notifications-ai-label-filter">
+                    <option value="all" selected>All</option>
+                  </select>
+                </label>
+                <label>
+                  Rows per page
                   <select id="notifications-limit-select">
                     <option value="50" selected>50</option>
                     <option value="100">100</option>
@@ -169,13 +175,39 @@
                     <option value="500">500</option>
                   </select>
                 </label>
-                <button id="notifications-refresh-btn" class="btn" type="button">Refresh announcements</button>
+                <button id="notifications-refresh-btn" class="btn" type="button">Refresh</button>
               </div>
               <div id="notifications-review-panel" class="review-toolbar hidden">
                 <span id="notifications-review-summary" class="note"></span>
                 <button id="notifications-review-save-btn" class="btn" type="button">Save reviewed labels</button>
               </div>
               <div id="notifications-review-feedback" class="note"></div>
+              <div id="notifications-suggestion-panel" class="suggestion-panel hidden">
+                <div class="suggestion-header">
+                  <strong>Suggest New AI Category</strong>
+                  <span class="suggestion-meta" id="notifications-suggestion-meta">No context selected</span>
+                </div>
+                <div class="suggestion-grid">
+                  <label>
+                    Suggested category
+                    <input id="notifications-suggestion-category" type="text" placeholder="Example: credit_facility_update" />
+                  </label>
+                  <label>
+                    Comment
+                    <textarea
+                      id="notifications-suggestion-comment"
+                      rows="2"
+                      placeholder="Why this should be a new category or how classification should improve"
+                    ></textarea>
+                  </label>
+                </div>
+                <div class="suggestion-actions">
+                  <button id="notifications-suggestion-submit-btn" class="btn" type="button">Submit suggestion</button>
+                  <button id="notifications-suggestion-clear-context-btn" class="btn" type="button">Clear row context</button>
+                </div>
+                <div id="notifications-suggestion-feedback" class="note"></div>
+                <div id="notifications-suggestion-list" class="suggestion-list"></div>
+              </div>
               <div id="notifications-meta" class="note"></div>
               <div class="table-wrap">
                 <table class="data-table">
@@ -189,7 +221,7 @@
                       <th>AI Label</th>
                       <th>AI Notes</th>
                       <th>Review Label</th>
-                      <th>Row Submit</th>
+                      <th>Review Actions</th>
                       <th>Attachment</th>
                     </tr>
                   </thead>

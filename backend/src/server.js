@@ -46,6 +46,10 @@ const pdfHashTimeoutMs = Number.parseInt(process.env.PDF_HASH_TIMEOUT_MS ?? "200
 const pdfHashConcurrency = Number.parseInt(process.env.PDF_HASH_CONCURRENCY ?? "4", 10);
 const aiLabelsStoragePath = resolve(process.cwd(), process.env.AI_LABELS_STORAGE_FILE ?? "data/announcement_ai_labels.json");
 const aiReviewsStoragePath = resolve(process.cwd(), process.env.AI_REVIEWS_STORAGE_FILE ?? "data/announcement_ai_reviews.json");
+const aiSuggestionsStoragePath = resolve(
+  process.cwd(),
+  process.env.AI_SUGGESTIONS_STORAGE_FILE ?? "data/announcement_ai_suggestions.json"
+);
 const aiCriteriaVersion = process.env.AI_CRITERIA_VERSION ?? "v1";
 const aiClassifierEnabled = normalizeText(process.env.AI_CLASSIFIER_ENABLED ?? "false").toLowerCase() === "true";
 const aiPromptLearningMinExamples = Number.parseInt(process.env.AI_PROMPT_LEARNING_MIN_EXAMPLES ?? "2", 10);
@@ -87,6 +91,7 @@ const databaseSnapshotTable = "announcement_snapshots";
 const databaseStoreSnapshotPrefix = "store:";
 const databaseAiLabelSnapshotKey = "ai-labels";
 const databaseAiReviewSnapshotKey = "ai-reviews";
+const databaseAiSuggestionSnapshotKey = "ai-suggestions";
 
 const notes = [];
 let noteId = 1;
@@ -303,6 +308,13 @@ const aiReviewStore = {
   syncInFlight: null,
   records: [],
   byKey: new Map(),
+  lastSyncAt: null
+};
+const aiSuggestionStore = {
+  loaded: false,
+  syncInFlight: null,
+  records: [],
+  byId: new Map(),
   lastSyncAt: null
 };
 const aiPromptLearningCache = {
@@ -1062,6 +1074,54 @@ function normalizeAiCategory(value) {
   return normalizeText(value).toLowerCase();
 }
 
+function normalizeSuggestionCategory(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  return normalized.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 120);
+}
+
+function createSuggestionId(seed = "") {
+  return createHash("sha1")
+    .update(`${Date.now()}|${Math.random()}|${seed}`)
+    .digest("hex")
+    .slice(0, 18);
+}
+
+function normalizeAiLabelFilter(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized || normalized === "all") {
+    return "all";
+  }
+  return normalized;
+}
+
+function matchesDedupAiLabelFilter(item, aiLabelFilter) {
+  const filter = normalizeAiLabelFilter(aiLabelFilter);
+  if (filter === "all") {
+    return true;
+  }
+
+  const aiStatus = normalizeText(item?.ai_status).toLowerCase();
+  const aiLabel = normalizeAiCategory(item?.ai_label);
+  const reviewLabel = normalizeAiCategory(item?.review_label);
+
+  if (filter === "pending") {
+    return aiStatus === "missing" || !aiLabel;
+  }
+
+  if (filter === "failed") {
+    return aiStatus === "failed";
+  }
+
+  if (filter === "reviewed") {
+    return Boolean(reviewLabel);
+  }
+
+  return aiLabel === filter || reviewLabel === filter;
+}
+
 function buildAiReviewMismatchPairs() {
   const mismatches = new Map();
 
@@ -1501,6 +1561,166 @@ async function persistAiReviewStore() {
 
   await mkdir(dirname(aiReviewsStoragePath), { recursive: true });
   await writeFile(aiReviewsStoragePath, JSON.stringify(payload, null, 2), "utf8");
+}
+
+function indexAiSuggestionStore() {
+  aiSuggestionStore.byId = new Map();
+  for (const record of aiSuggestionStore.records) {
+    const id = normalizeText(record?.id);
+    if (!id) {
+      continue;
+    }
+    aiSuggestionStore.byId.set(id, record);
+  }
+}
+
+function normalizeAiSuggestionRecord(record) {
+  const id = normalizeText(record?.id);
+  const suggestedCategory = normalizeSuggestionCategory(record?.suggestedCategory ?? record?.category);
+  const comment = normalizeText(record?.comment ?? record?.notes).slice(0, 3000);
+  if (!suggestedCategory || !comment) {
+    return null;
+  }
+
+  return {
+    id: id || createSuggestionId(`${suggestedCategory}|${comment}`),
+    suggestedCategory,
+    comment,
+    source: normalizeText(record?.source || "frontend"),
+    suggestedBy: normalizeText(record?.suggestedBy || record?.reviewer || "user"),
+    status: normalizeText(record?.status || "OPEN").toUpperCase(),
+    exampleDedupAnnouncementKey: normalizeAnnouncementKey(
+      record?.exampleDedupAnnouncementKey ?? record?.dedupAnnouncementKey ?? record?.announcementKey
+    ),
+    exampleAttachmentUrl: normalizeText(record?.exampleAttachmentUrl ?? record?.attachmentUrl),
+    existingAiLabel: normalizeAiCategory(record?.existingAiLabel),
+    existingReviewLabel: normalizeAiCategory(record?.existingReviewLabel),
+    createdAt: normalizeText(record?.createdAt || record?.updatedAt || new Date().toISOString())
+  };
+}
+
+async function loadAiSuggestionStore() {
+  if (aiSuggestionStore.loaded) {
+    return;
+  }
+
+  if (aiSuggestionStore.syncInFlight) {
+    await aiSuggestionStore.syncInFlight;
+    return;
+  }
+
+  aiSuggestionStore.syncInFlight = (async () => {
+    let parsed = null;
+    let source = "";
+
+    if (isDatabaseEnabled()) {
+      try {
+        parsed = await readSnapshotFromDatabase(databaseAiSuggestionSnapshotKey);
+        if (parsed) {
+          source = "postgres";
+        }
+      } catch (error) {
+        const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB load error"));
+        log("Failed to load AI suggestion store from Postgres. Falling back to file.", { message });
+      }
+    }
+
+    if (!parsed) {
+      try {
+        const text = await readFile(aiSuggestionsStoragePath, "utf8");
+        parsed = JSON.parse(text);
+        source = "file";
+      } catch (error) {
+        if (error?.code === "ENOENT") {
+          log("AI suggestion store not found. Starting fresh.", { path: aiSuggestionsStoragePath });
+        } else {
+          const message = error instanceof Error ? error.message : "Unknown AI suggestion store load error";
+          log("Failed to load AI suggestion store. Starting fresh.", { message, path: aiSuggestionsStoragePath });
+        }
+      }
+    }
+
+    if (!parsed) {
+      aiSuggestionStore.records = [];
+      aiSuggestionStore.lastSyncAt = null;
+      indexAiSuggestionStore();
+      aiSuggestionStore.loaded = true;
+      return;
+    }
+
+    const records = Array.isArray(parsed?.records) ? parsed.records : Array.isArray(parsed) ? parsed : [];
+    aiSuggestionStore.records = records.map(normalizeAiSuggestionRecord).filter(Boolean);
+    aiSuggestionStore.records.sort((left, right) => parseTimestampToMillis(right.createdAt) - parseTimestampToMillis(left.createdAt));
+    aiSuggestionStore.lastSyncAt =
+      typeof parsed?.lastSyncAt === "string" ? parsed.lastSyncAt : typeof parsed?.updatedAt === "string" ? parsed.updatedAt : null;
+    indexAiSuggestionStore();
+
+    if (source === "file" && isDatabaseEnabled()) {
+      try {
+        await writeSnapshotToDatabase(databaseAiSuggestionSnapshotKey, {
+          updatedAt: aiSuggestionStore.lastSyncAt || new Date().toISOString(),
+          total: aiSuggestionStore.records.length,
+          records: aiSuggestionStore.records
+        });
+        source = "file->postgres";
+      } catch (error) {
+        const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
+        log("Failed to backfill AI suggestion store into Postgres", { message });
+      }
+    }
+
+    log("Loaded AI suggestion store", {
+      count: aiSuggestionStore.records.length,
+      path: aiSuggestionsStoragePath,
+      source
+    });
+
+    aiSuggestionStore.loaded = true;
+  })();
+
+  try {
+    await aiSuggestionStore.syncInFlight;
+  } finally {
+    aiSuggestionStore.syncInFlight = null;
+  }
+}
+
+async function persistAiSuggestionStore() {
+  aiSuggestionStore.lastSyncAt = new Date().toISOString();
+  const payload = {
+    updatedAt: aiSuggestionStore.lastSyncAt,
+    total: aiSuggestionStore.records.length,
+    records: aiSuggestionStore.records
+  };
+
+  if (isDatabaseEnabled()) {
+    try {
+      await writeSnapshotToDatabase(databaseAiSuggestionSnapshotKey, payload);
+    } catch (error) {
+      const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
+      log("Failed to persist AI suggestion store to Postgres", { message });
+    }
+  }
+
+  await mkdir(dirname(aiSuggestionsStoragePath), { recursive: true });
+  await writeFile(aiSuggestionsStoragePath, JSON.stringify(payload, null, 2), "utf8");
+}
+
+function addAiSuggestionRecord(record) {
+  const normalized = normalizeAiSuggestionRecord(record);
+  if (!normalized) {
+    return null;
+  }
+
+  const existingIndex = aiSuggestionStore.records.findIndex((item) => normalizeText(item?.id) === normalized.id);
+  if (existingIndex >= 0) {
+    aiSuggestionStore.records[existingIndex] = normalized;
+  } else {
+    aiSuggestionStore.records.unshift(normalized);
+  }
+
+  aiSuggestionStore.byId.set(normalized.id, normalized);
+  return normalized;
 }
 
 function getAiReviewRecordForKey(dedupAnnouncementKey) {
@@ -3714,7 +3934,7 @@ async function handleCreateNote(req, res) {
 }
 
 async function handleGetAiCategories(req, res) {
-  await Promise.all([loadAiLabelStore(), loadAiReviewStore()]);
+  await Promise.all([loadAiLabelStore(), loadAiReviewStore(), loadAiSuggestionStore()]);
   const diagnostics = buildAiReviewDiagnostics();
 
   sendJson(req, res, 200, {
@@ -3728,7 +3948,85 @@ async function handleGetAiCategories(req, res) {
       activeRules: diagnostics.learnedRules.length,
       learnedRules: diagnostics.learnedRules
     },
-    diagnostics
+    diagnostics,
+    suggestions: {
+      total: aiSuggestionStore.records.length,
+      lastSyncAt: aiSuggestionStore.lastSyncAt
+    }
+  });
+}
+
+async function handleGetAiSuggestions(req, res, requestUrl) {
+  await loadAiSuggestionStore();
+
+  const requestedLimit = Number.parseInt(requestUrl.searchParams.get("limit") ?? "100", 10);
+  const limit = Math.min(Math.max(normalizePositiveInt(requestedLimit, 100), 1), 500);
+  const requestedOffset = Number.parseInt(requestUrl.searchParams.get("offset") ?? "0", 10);
+  const offset = Math.max(0, Number.isFinite(requestedOffset) ? Math.floor(requestedOffset) : 0);
+  const statusFilter = normalizeText(requestUrl.searchParams.get("status") ?? "OPEN").toUpperCase();
+  const categoryFilter = normalizeSuggestionCategory(requestUrl.searchParams.get("category") ?? "");
+
+  let filtered = [...aiSuggestionStore.records];
+  if (statusFilter !== "ALL") {
+    filtered = filtered.filter((item) => normalizeText(item?.status).toUpperCase() === statusFilter);
+  }
+  if (categoryFilter) {
+    filtered = filtered.filter((item) => normalizeSuggestionCategory(item?.suggestedCategory) === categoryFilter);
+  }
+
+  const suggestions = filtered.slice(offset, offset + limit);
+  sendJson(req, res, 200, {
+    suggestions,
+    total: filtered.length,
+    limit,
+    offset,
+    page: Math.floor(offset / limit) + 1,
+    totalPages: Math.max(1, Math.ceil(filtered.length / limit)),
+    lastSyncAt: aiSuggestionStore.lastSyncAt
+  });
+}
+
+async function handleCreateAiSuggestion(req, res) {
+  await loadAiSuggestionStore();
+  const body = await readJsonBody(req);
+
+  const suggestedCategory = normalizeSuggestionCategory(body?.suggestedCategory ?? body?.category);
+  const comment = normalizeText(body?.comment ?? body?.notes).slice(0, 3000);
+  if (!suggestedCategory || suggestedCategory.length < 3) {
+    sendJson(req, res, 400, { error: "Field 'suggestedCategory' is required." });
+    return;
+  }
+  if (!comment) {
+    sendJson(req, res, 400, { error: "Field 'comment' is required." });
+    return;
+  }
+
+  const record = addAiSuggestionRecord({
+    id: createSuggestionId(`${suggestedCategory}|${comment}`),
+    suggestedCategory,
+    comment,
+    source: normalizeText(body?.source || "frontend"),
+    suggestedBy: normalizeText(body?.suggestedBy || "user"),
+    status: "OPEN",
+    exampleDedupAnnouncementKey: normalizeAnnouncementKey(
+      body?.exampleDedupAnnouncementKey ?? body?.dedupAnnouncementKey ?? body?.announcementKey
+    ),
+    exampleAttachmentUrl: normalizeText(body?.exampleAttachmentUrl ?? body?.attachmentUrl),
+    existingAiLabel: normalizeAiCategory(body?.existingAiLabel),
+    existingReviewLabel: normalizeAiCategory(body?.existingReviewLabel),
+    createdAt: new Date().toISOString()
+  });
+
+  if (!record) {
+    sendJson(req, res, 400, { error: "Invalid suggestion payload." });
+    return;
+  }
+
+  await persistAiSuggestionStore();
+  sendJson(req, res, 201, {
+    suggestion: record,
+    total: aiSuggestionStore.records.length,
+    lastSyncAt: aiSuggestionStore.lastSyncAt
   });
 }
 
@@ -3877,6 +4175,9 @@ async function handleGetAnnouncements(req, res, requestUrl) {
     .replace(/\s+/g, "")
     .toUpperCase();
   const symbolFilter = String(requestUrl.searchParams.get("symbol") ?? "").trim().toUpperCase();
+  const aiLabelFilter = normalizeAiLabelFilter(
+    requestUrl.searchParams.get("aiLabel") ?? requestUrl.searchParams.get("ai_label") ?? ""
+  );
 
   const selectedExchange =
     exchangeQuery === "BSE"
@@ -3902,7 +4203,7 @@ async function handleGetAnnouncements(req, res, requestUrl) {
           ? [...stores.DEDUP.announcements]
         : [...stores[selectedExchange].announcements];
 
-  const filtered = sourceAnnouncements.filter((item) => {
+  const filteredSource = sourceAnnouncements.filter((item) => {
     const filterExchange =
       selectedExchange === "NSE+BSE"
         ? "COMBINED"
@@ -3930,9 +4231,14 @@ async function handleGetAnnouncements(req, res, requestUrl) {
           ? stores.DEDUP.lastSyncStats
         : stores[selectedExchange].lastSyncStats;
 
-  const slicedAnnouncements = filtered.slice(offset, offset + limit);
-  const announcements =
-    selectedExchange === "DEDUP" ? slicedAnnouncements.map((item) => enrichDedupAnnouncementWithAi(item)) : slicedAnnouncements;
+  let filtered = filteredSource;
+  let announcements = [];
+  if (selectedExchange === "DEDUP") {
+    filtered = filteredSource.map((item) => enrichDedupAnnouncementWithAi(item)).filter((item) => matchesDedupAiLabelFilter(item, aiLabelFilter));
+    announcements = filtered.slice(offset, offset + limit);
+  } else {
+    announcements = filtered.slice(offset, offset + limit);
+  }
 
   sendJson(req, res, 200, {
     exchange: selectedExchange,
@@ -4201,7 +4507,15 @@ async function handleWorkerHeartbeat(req, res) {
 }
 
 async function handleStatus(req, res) {
-  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore(), loadAiReviewStore()]);
+  await Promise.all([
+    loadStore("NSE"),
+    loadStore("BSE"),
+    loadStore("COMBINED"),
+    loadStore("DEDUP"),
+    loadAiLabelStore(),
+    loadAiReviewStore(),
+    loadAiSuggestionStore()
+  ]);
 
   const aiSuccessCount = aiLabelStore.records.filter(
     (record) => normalizeText(record?.criteriaVersion) === aiCriteriaVersion && normalizeText(record?.status) === "SUCCESS"
@@ -4248,6 +4562,8 @@ async function handleStatus(req, res) {
     aiLabelsLastSyncAt: aiLabelStore.lastSyncAt,
     aiReviewsCount: aiReviewStore.records.length,
     aiReviewsLastSyncAt: aiReviewStore.lastSyncAt,
+    aiSuggestionsCount: aiSuggestionStore.records.length,
+    aiSuggestionsLastSyncAt: aiSuggestionStore.lastSyncAt,
     aiReviewDiagnostics,
     database: {
       enabled: isDatabaseEnabled(),
@@ -4279,6 +4595,8 @@ const server = createServer(async (req, res) => {
           "GET/POST /api/notes",
           "GET /api/notifications/announcements?exchange=NSE|BSE|NSE+BSE|DEDUP|ALL&limit=100&symbol=TCS",
           "GET /api/ai/categories",
+          "GET /api/ai/suggestions",
+          "POST /api/ai/suggestions",
           "POST /api/ai/reviews/bulk",
           "POST /api/jobs/daily",
           "POST /api/jobs/ai-only"
@@ -4317,6 +4635,16 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (method === "GET" && requestUrl.pathname === "/api/ai/suggestions") {
+      await handleGetAiSuggestions(req, res, requestUrl);
+      return;
+    }
+
+    if (method === "POST" && requestUrl.pathname === "/api/ai/suggestions") {
+      await handleCreateAiSuggestion(req, res);
+      return;
+    }
+
     if (method === "POST" && requestUrl.pathname === "/api/ai/reviews/bulk") {
       await handleBulkAiReviews(req, res);
       return;
@@ -4345,7 +4673,15 @@ const server = createServer(async (req, res) => {
   }
 });
 
-Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore(), loadAiReviewStore()])
+Promise.all([
+  loadStore("NSE"),
+  loadStore("BSE"),
+  loadStore("COMBINED"),
+  loadStore("DEDUP"),
+  loadAiLabelStore(),
+  loadAiReviewStore(),
+  loadAiSuggestionStore()
+])
   .catch((error) => {
     const message = error instanceof Error ? error.message : "Unknown error";
     log("Announcement stores warm-up failed", { message });

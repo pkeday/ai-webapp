@@ -206,6 +206,7 @@ const state = {
     totalPages: 1,
     exchange: "NSE",
     symbol: "",
+    aiLabelFilter: "all",
     source: "",
     loading: false,
     error: "",
@@ -214,7 +215,15 @@ const state = {
     aiCategories: [],
     reviewQueue: {},
     reviewSaving: false,
-    reviewFeedback: ""
+    reviewFeedback: "",
+    suggestionSaving: false,
+    suggestionFeedback: "",
+    suggestions: [],
+    suggestionsTotal: 0,
+    suggestionsLoaded: false,
+    suggestionsLoading: false,
+    suggestionsError: "",
+    suggestionContext: null
   },
   priorityCompanies: loadList(STORAGE_KEYS.priority, ["Reliance Industries", "UltraTech Cement", "ICICI Bank"]),
   ignoredCompanies: loadList(STORAGE_KEYS.ignored, ["Adani Ports", "Vodafone Idea"]),
@@ -270,12 +279,21 @@ const refs = {
   archivePageLabel: document.getElementById("archive-page-label"),
   notificationsExchangeSelect: document.getElementById("notifications-exchange-select"),
   notificationsSymbolInput: document.getElementById("notifications-symbol-input"),
+  notificationsAiLabelFilter: document.getElementById("notifications-ai-label-filter"),
   notificationsLimitSelect: document.getElementById("notifications-limit-select"),
   notificationsRefreshBtn: document.getElementById("notifications-refresh-btn"),
   notificationsReviewPanel: document.getElementById("notifications-review-panel"),
   notificationsReviewSummary: document.getElementById("notifications-review-summary"),
   notificationsReviewSaveBtn: document.getElementById("notifications-review-save-btn"),
   notificationsReviewFeedback: document.getElementById("notifications-review-feedback"),
+  notificationsSuggestionPanel: document.getElementById("notifications-suggestion-panel"),
+  notificationsSuggestionMeta: document.getElementById("notifications-suggestion-meta"),
+  notificationsSuggestionCategory: document.getElementById("notifications-suggestion-category"),
+  notificationsSuggestionComment: document.getElementById("notifications-suggestion-comment"),
+  notificationsSuggestionSubmitBtn: document.getElementById("notifications-suggestion-submit-btn"),
+  notificationsSuggestionClearContextBtn: document.getElementById("notifications-suggestion-clear-context-btn"),
+  notificationsSuggestionFeedback: document.getElementById("notifications-suggestion-feedback"),
+  notificationsSuggestionList: document.getElementById("notifications-suggestion-list"),
   notificationsMeta: document.getElementById("notifications-meta"),
   notificationsTable: document.getElementById("notifications-table"),
   notificationsPrevBtn: document.getElementById("notifications-prev-btn"),
@@ -345,6 +363,13 @@ function bindEvents() {
 
       if (state.section === "notifications" && state.notifications.items.length === 0 && !state.notifications.loading) {
         void fetchNotifications();
+      } else if (
+        state.section === "notifications" &&
+        String(state.notifications.exchange || "").toUpperCase() === "DEDUP" &&
+        !state.notifications.suggestionsLoaded &&
+        !state.notifications.suggestionsLoading
+      ) {
+        void fetchNotificationSuggestions();
       }
     });
   }
@@ -469,6 +494,12 @@ function bindEvents() {
 
   refs.notificationsExchangeSelect.addEventListener("change", async () => {
     state.notifications.page = 1;
+    if (String(refs.notificationsExchangeSelect?.value ?? "").trim().toUpperCase() !== "DEDUP") {
+      state.notifications.aiLabelFilter = "all";
+      if (refs.notificationsAiLabelFilter) {
+        refs.notificationsAiLabelFilter.value = "all";
+      }
+    }
     await fetchNotifications();
   });
 
@@ -476,6 +507,14 @@ function bindEvents() {
     state.notifications.page = 1;
     await fetchNotifications();
   });
+
+  if (refs.notificationsAiLabelFilter) {
+    refs.notificationsAiLabelFilter.addEventListener("change", async (event) => {
+      state.notifications.aiLabelFilter = normalizeAiLabelFilterValue(event.target.value);
+      state.notifications.page = 1;
+      await fetchNotifications();
+    });
+  }
 
   refs.notificationsSymbolInput.addEventListener("input", () => {
     scheduleNotificationsSearch();
@@ -517,6 +556,20 @@ function bindEvents() {
 
   if (refs.notificationsTable) {
     refs.notificationsTable.addEventListener("click", (event) => {
+      const contextButton = event.target.closest("button[data-suggestion-context]");
+      if (contextButton) {
+        const dedupAnnouncementKey = String(contextButton.dataset.suggestionContext ?? "").trim();
+        if (dedupAnnouncementKey) {
+          const rowItem = state.notifications.items.find((item) => getDedupAnnouncementKey(item) === dedupAnnouncementKey);
+          if (rowItem) {
+            setNotificationSuggestionContext(rowItem);
+            state.notifications.suggestionFeedback = `Linked context to ${rowItem.symbol || rowItem.company || dedupAnnouncementKey}.`;
+            renderNotifications();
+          }
+        }
+        return;
+      }
+
       const submitButton = event.target.closest("button[data-review-submit]");
       if (!submitButton) {
         return;
@@ -539,6 +592,20 @@ function bindEvents() {
         queuedAt: new Date().toISOString()
       };
       state.notifications.reviewFeedback = `Queued 1 row. Pending save: ${Object.keys(state.notifications.reviewQueue).length}.`;
+      renderNotifications();
+    });
+  }
+
+  if (refs.notificationsSuggestionSubmitBtn) {
+    refs.notificationsSuggestionSubmitBtn.addEventListener("click", async () => {
+      await submitNotificationSuggestion();
+    });
+  }
+
+  if (refs.notificationsSuggestionClearContextBtn) {
+    refs.notificationsSuggestionClearContextBtn.addEventListener("click", () => {
+      clearNotificationSuggestionContext();
+      state.notifications.suggestionFeedback = "Row context cleared.";
       renderNotifications();
     });
   }
@@ -1056,8 +1123,38 @@ function renderNotifications() {
     const normalizedExchange = state.notifications.exchange === "BSE+NSE" ? "NSE+BSE" : state.notifications.exchange;
     refs.notificationsExchangeSelect.value = normalizedExchange;
   }
+  if (refs.notificationsLimitSelect) {
+    refs.notificationsLimitSelect.value = String(state.notifications.limit || 50);
+  }
 
   const isDedupView = String(state.notifications.exchange ?? "").toUpperCase() === "DEDUP";
+  if (!isDedupView) {
+    state.notifications.aiLabelFilter = "all";
+  }
+  const normalizedAiLabelFilter = normalizeAiLabelFilterValue(state.notifications.aiLabelFilter);
+  const aiFilterOptions = [
+    { value: "all", label: "All AI labels" },
+    { value: "pending", label: "Pending (no AI label)" },
+    { value: "failed", label: "Failed" },
+    { value: "reviewed", label: "Reviewed (manual label)" },
+    ...getNotificationAiCategories().map((category) => ({
+      value: category,
+      label: formatAiCategoryLabel(category)
+    }))
+  ];
+  if (refs.notificationsAiLabelFilter) {
+    refs.notificationsAiLabelFilter.innerHTML = aiFilterOptions
+      .filter((option, index, items) => items.findIndex((item) => item.value === option.value) === index)
+      .map((option) => `<option value="${escapeAttribute(option.value)}">${escapeHtml(option.label)}</option>`)
+      .join("");
+    refs.notificationsAiLabelFilter.value = normalizedAiLabelFilter;
+    if (refs.notificationsAiLabelFilter.value !== normalizedAiLabelFilter) {
+      refs.notificationsAiLabelFilter.value = "all";
+      state.notifications.aiLabelFilter = "all";
+    }
+    refs.notificationsAiLabelFilter.disabled = !isDedupView;
+  }
+
   const queuedReviewCount = Object.keys(state.notifications.reviewQueue || {}).length;
 
   if (refs.notificationsReviewPanel) {
@@ -1075,6 +1172,59 @@ function renderNotifications() {
   if (refs.notificationsReviewFeedback) {
     refs.notificationsReviewFeedback.textContent = isDedupView ? state.notifications.reviewFeedback || "" : "";
   }
+  if (refs.notificationsSuggestionPanel) {
+    refs.notificationsSuggestionPanel.classList.toggle("hidden", !isDedupView);
+  }
+  if (refs.notificationsSuggestionSubmitBtn) {
+    refs.notificationsSuggestionSubmitBtn.disabled = !isDedupView || state.notifications.suggestionSaving;
+    refs.notificationsSuggestionSubmitBtn.textContent = state.notifications.suggestionSaving ? "Submitting..." : "Submit suggestion";
+  }
+  if (refs.notificationsSuggestionClearContextBtn) {
+    refs.notificationsSuggestionClearContextBtn.disabled = !isDedupView || !state.notifications.suggestionContext;
+  }
+  if (refs.notificationsSuggestionMeta) {
+    const context = state.notifications.suggestionContext;
+    refs.notificationsSuggestionMeta.textContent = context
+      ? `Context: ${context.symbol || "-"} | ${context.company || "-"} | key ${context.dedupAnnouncementKey}`
+      : "No context selected";
+  }
+  if (refs.notificationsSuggestionFeedback) {
+    const suggestionMessage = isDedupView ? state.notifications.suggestionFeedback || "" : "";
+    refs.notificationsSuggestionFeedback.textContent = suggestionMessage;
+    refs.notificationsSuggestionFeedback.classList.toggle("hidden", !suggestionMessage);
+  }
+  if (refs.notificationsSuggestionList) {
+    if (!isDedupView) {
+      refs.notificationsSuggestionList.innerHTML = "";
+    } else if (state.notifications.suggestionsLoading) {
+      refs.notificationsSuggestionList.innerHTML = '<div class="empty-state">Loading suggestion history...</div>';
+    } else if (state.notifications.suggestionsError) {
+      refs.notificationsSuggestionList.innerHTML = `<div class="empty-state">Failed to load suggestions: ${escapeHtml(
+        state.notifications.suggestionsError
+      )}</div>`;
+    } else if (!Array.isArray(state.notifications.suggestions) || state.notifications.suggestions.length === 0) {
+      refs.notificationsSuggestionList.innerHTML = '<div class="empty-state">No suggestion history yet.</div>';
+    } else {
+      refs.notificationsSuggestionList.innerHTML = state.notifications.suggestions
+        .slice(0, 8)
+        .map((entry) => {
+          const category = formatAiCategoryLabel(entry?.suggestedCategory || "-");
+          const createdAt = formatNotificationTimestamp(entry?.createdAt || "");
+          const status = String(entry?.status || "OPEN").trim() || "OPEN";
+          const comment = String(entry?.comment || "").trim();
+          return `
+            <div class="suggestion-entry">
+              <div class="suggestion-entry-head">
+                <strong>${escapeHtml(category)}</strong>
+                <span>${escapeHtml(status)} | ${escapeHtml(createdAt)}</span>
+              </div>
+              <p>${escapeHtml(comment || "-")}</p>
+            </div>
+          `;
+        })
+        .join("");
+    }
+  }
 
   const stats = state.notifications.lastSyncStats;
   const syncedLabel = state.notifications.lastSyncAt
@@ -1088,6 +1238,13 @@ function renderNotifications() {
     `page ${state.notifications.page} of ${state.notifications.totalPages}`,
     `last sync: ${syncedLabel}`
   ];
+  if (isDedupView && normalizedAiLabelFilter !== "all") {
+    const filterLabel =
+      normalizedAiLabelFilter === "pending" || normalizedAiLabelFilter === "failed" || normalizedAiLabelFilter === "reviewed"
+        ? normalizedAiLabelFilter
+        : formatAiCategoryLabel(normalizedAiLabelFilter);
+    details.push(`ai filter: ${filterLabel}`);
+  }
 
   if (state.notifications.source) {
     details.push(`source: ${state.notifications.source}`);
@@ -1284,6 +1441,7 @@ function renderNotifications() {
               <button class="btn" type="button" data-review-submit="${escapeAttribute(dedupAnnouncementKey)}"${
                 submitDisabled ? " disabled" : ""
               }>${hasQueued ? "Queued" : "Submit row"}</button>
+              <button class="btn" type="button" data-suggestion-context="${escapeAttribute(dedupAnnouncementKey)}">Use for suggestion</button>
               ${statusText ? `<span class="review-row-status">${escapeHtml(statusText)}</span>` : ""}
             </div>
           `;
@@ -1640,9 +1798,76 @@ function fallbackSymbolMatch(item, exchange, symbol) {
   return nseSymbol === query || companyName.includes(query) || isin === query;
 }
 
+function normalizeAiLabelFilterValue(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!normalized || normalized === "all") {
+    return "all";
+  }
+  return normalized;
+}
+
+function matchesNotificationAiLabelFilter(item, aiLabelFilter) {
+  const filter = normalizeAiLabelFilterValue(aiLabelFilter);
+  if (filter === "all") {
+    return true;
+  }
+
+  const aiStatus = String(item?.ai_status ?? "")
+    .trim()
+    .toLowerCase();
+  const aiLabel = String(item?.ai_label ?? "")
+    .trim()
+    .toLowerCase();
+  const reviewLabel = String(item?.review_label ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (filter === "pending") {
+    return aiStatus === "missing" || !aiLabel;
+  }
+
+  if (filter === "failed") {
+    return aiStatus === "failed";
+  }
+
+  if (filter === "reviewed") {
+    return Boolean(reviewLabel);
+  }
+
+  return aiLabel === filter || reviewLabel === filter;
+}
+
+function setNotificationSuggestionContext(item) {
+  const dedupAnnouncementKey = getDedupAnnouncementKey(item);
+  if (!dedupAnnouncementKey) {
+    return;
+  }
+
+  state.notifications.suggestionContext = {
+    dedupAnnouncementKey,
+    attachmentUrl: String(item?.attachment_url ?? "").trim(),
+    existingAiLabel: String(item?.ai_label ?? "").trim(),
+    existingReviewLabel: String(item?.review_label ?? "").trim(),
+    symbol: String(item?.symbol ?? "").trim(),
+    company: String(item?.company ?? "").trim()
+  };
+}
+
+function clearNotificationSuggestionContext() {
+  state.notifications.suggestionContext = null;
+}
+
 function getNotificationAiCategories() {
   if (Array.isArray(state.notifications.aiCategories) && state.notifications.aiCategories.length > 0) {
-    return state.notifications.aiCategories;
+    return Array.from(
+      new Set(
+        state.notifications.aiCategories
+          .map((value) => String(value ?? "").trim().toLowerCase())
+          .filter((value) => Boolean(value))
+      )
+    ).sort();
   }
   return [...fallbackAiCategories];
 }
@@ -1696,6 +1921,175 @@ async function fetchNotificationCategories() {
   }
 
   state.notifications.aiCategories = [...fallbackAiCategories];
+}
+
+function normalizeSuggestionCategoryInput(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  return normalized.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 120);
+}
+
+function upsertNotificationSuggestionRecord(record) {
+  const id = String(record?.id ?? "").trim();
+  if (!id) {
+    return;
+  }
+
+  const existingIndex = state.notifications.suggestions.findIndex((item) => String(item?.id ?? "").trim() === id);
+  if (existingIndex >= 0) {
+    state.notifications.suggestions[existingIndex] = record;
+  } else {
+    state.notifications.suggestions.unshift(record);
+  }
+}
+
+async function fetchNotificationSuggestions(options = {}) {
+  const force = Boolean(options?.force);
+  if (state.notifications.suggestionsLoading) {
+    return;
+  }
+  if (state.notifications.suggestionsLoaded && !force) {
+    return;
+  }
+
+  state.notifications.suggestionsLoading = true;
+  state.notifications.suggestionsError = "";
+  renderNotifications();
+
+  const endpoint = "/api/ai/suggestions?limit=20&status=ALL";
+  let response = null;
+  let requestError = null;
+
+  try {
+    response = await apiFetch(endpoint);
+  } catch (error) {
+    requestError = error instanceof Error ? error : new Error("Unknown suggestion fetch error");
+  }
+
+  if (!response) {
+    const currentBase = getApiBase();
+    const fallbackBase = notificationsApiBaseFallback.replace(/\/$/, "");
+    if (currentBase !== fallbackBase) {
+      try {
+        response = await apiFetchFromBase(endpoint, fallbackBase, {});
+      } catch (error) {
+        const fallbackError = error instanceof Error ? error.message : "Unknown suggestion fallback error";
+        const primary = requestError ? requestError.message : "";
+        requestError = new Error(primary ? `${primary}; ${fallbackError}` : fallbackError);
+      }
+    }
+  }
+
+  if (response) {
+    state.notifications.suggestions = Array.isArray(response?.suggestions) ? response.suggestions : [];
+    state.notifications.suggestionsTotal = Number(response?.total ?? state.notifications.suggestions.length);
+    state.notifications.suggestionsLoaded = true;
+    state.notifications.suggestionsError = "";
+  } else if (requestError) {
+    state.notifications.suggestionsError = requestError.message;
+  }
+
+  state.notifications.suggestionsLoading = false;
+  renderNotifications();
+}
+
+async function submitNotificationSuggestion() {
+  const rawCategory = refs.notificationsSuggestionCategory?.value ?? "";
+  const comment = String(refs.notificationsSuggestionComment?.value ?? "")
+    .trim()
+    .slice(0, 3000);
+  const suggestedCategory = normalizeSuggestionCategoryInput(rawCategory);
+
+  if (!suggestedCategory) {
+    state.notifications.suggestionFeedback = "Enter a suggested category.";
+    renderNotifications();
+    return;
+  }
+
+  if (!comment) {
+    state.notifications.suggestionFeedback = "Enter a comment for this suggestion.";
+    renderNotifications();
+    return;
+  }
+
+  const context = state.notifications.suggestionContext || null;
+  const payload = {
+    suggestedCategory,
+    comment,
+    source: "frontend",
+    suggestedBy: "user",
+    exampleDedupAnnouncementKey: context?.dedupAnnouncementKey || "",
+    exampleAttachmentUrl: context?.attachmentUrl || "",
+    existingAiLabel: context?.existingAiLabel || "",
+    existingReviewLabel: context?.existingReviewLabel || ""
+  };
+
+  state.notifications.suggestionSaving = true;
+  state.notifications.suggestionFeedback = "Submitting suggestion...";
+  renderNotifications();
+
+  let response = null;
+  let requestError = null;
+  try {
+    response = await apiFetch("/api/ai/suggestions", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    requestError = error instanceof Error ? error : new Error("Unknown suggestion save error");
+  }
+
+  if (!response) {
+    const currentBase = getApiBase();
+    const fallbackBase = notificationsApiBaseFallback.replace(/\/$/, "");
+    if (currentBase !== fallbackBase) {
+      try {
+        response = await apiFetchFromBase(
+          "/api/ai/suggestions",
+          fallbackBase,
+          {
+            method: "POST",
+            body: JSON.stringify(payload)
+          },
+          false
+        );
+      } catch (error) {
+        const fallbackError = error instanceof Error ? error.message : "Unknown suggestion fallback error";
+        const primary = requestError ? requestError.message : "";
+        requestError = new Error(primary ? `${primary}; ${fallbackError}` : fallbackError);
+      }
+    }
+  }
+
+  if (!response) {
+    state.notifications.suggestionSaving = false;
+    state.notifications.suggestionFeedback = `Failed to submit suggestion: ${requestError?.message || "Unknown error"}`;
+    renderNotifications();
+    return;
+  }
+
+  const savedRecord = response?.suggestion && typeof response.suggestion === "object" ? response.suggestion : null;
+  if (savedRecord) {
+    upsertNotificationSuggestionRecord(savedRecord);
+  }
+
+  if (!state.notifications.aiCategories.includes(suggestedCategory)) {
+    state.notifications.aiCategories = [...state.notifications.aiCategories, suggestedCategory].sort();
+  }
+
+  state.notifications.suggestionsTotal = Number(response?.total ?? state.notifications.suggestions.length);
+  state.notifications.suggestionsLoaded = true;
+  state.notifications.suggestionsError = "";
+  state.notifications.suggestionSaving = false;
+  state.notifications.suggestionFeedback = "Suggestion saved.";
+  if (refs.notificationsSuggestionComment) {
+    refs.notificationsSuggestionComment.value = "";
+  }
+  renderNotifications();
 }
 
 async function saveQueuedNotificationReviews() {
@@ -1789,6 +2183,13 @@ async function fetchNotifications() {
   if (exchange === "DEDUP" && state.notifications.aiCategories.length === 0) {
     await fetchNotificationCategories();
   }
+  const aiLabelFilter =
+    exchange === "DEDUP"
+      ? normalizeAiLabelFilterValue(refs.notificationsAiLabelFilter?.value ?? state.notifications.aiLabelFilter ?? "all")
+      : "all";
+  if (exchange === "DEDUP" && !state.notifications.suggestionsLoaded && !state.notifications.suggestionsLoading) {
+    void fetchNotificationSuggestions();
+  }
   const symbol = (refs.notificationsSymbolInput?.value ?? "").trim().toUpperCase();
   const limitInput = Number.parseInt(refs.notificationsLimitSelect?.value ?? "50", 10);
   const limit = Number.isFinite(limitInput) ? Math.max(1, Math.min(500, limitInput)) : 50;
@@ -1805,6 +2206,7 @@ async function fetchNotifications() {
 
   state.notifications.exchange = exchange;
   state.notifications.symbol = symbol;
+  state.notifications.aiLabelFilter = aiLabelFilter;
   state.notifications.limit = limit;
   state.notifications.loading = true;
   state.notifications.error = "";
@@ -1818,6 +2220,9 @@ async function fetchNotifications() {
 
   if (symbol) {
     params.set("symbol", symbol);
+  }
+  if (exchange === "DEDUP" && aiLabelFilter !== "all") {
+    params.set("aiLabel", aiLabelFilter);
   }
 
   const notificationsEndpoint = `/api/notifications/announcements?${params.toString()}`;
@@ -1910,7 +2315,15 @@ async function fetchNotifications() {
 
     const fallbackPayload = await fallbackResponse.json();
     const allItems = Array.isArray(fallbackPayload?.announcements) ? fallbackPayload.announcements : [];
-    const filteredItems = allItems.filter((item) => fallbackSymbolMatch(item, exchange, symbol));
+    const filteredItems = allItems.filter((item) => {
+      if (!fallbackSymbolMatch(item, exchange, symbol)) {
+        return false;
+      }
+      if (exchange === "DEDUP") {
+        return matchesNotificationAiLabelFilter(item, aiLabelFilter);
+      }
+      return true;
+    });
     const normalizedItems = filteredItems.map((item) => ({
       ...item,
       exchange: item.exchange || exchange
