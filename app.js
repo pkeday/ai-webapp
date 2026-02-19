@@ -158,6 +158,7 @@ const state = {
     total: 0,
     limit: 50,
     symbol: "",
+    source: "",
     loading: false,
     error: "",
     lastSyncAt: null,
@@ -851,6 +852,10 @@ function renderNotifications() {
     `last sync: ${syncedLabel}`
   ];
 
+  if (state.notifications.source) {
+    details.push(`source: ${state.notifications.source}`);
+  }
+
   if (stats?.fromDate && stats?.toDate) {
     details.push(`range: ${stats.fromDate} to ${stats.toDate}`);
   }
@@ -1154,43 +1159,72 @@ async function fetchNotifications() {
     params.set("symbol", symbol);
   }
 
+  let apiResult = null;
+  let apiError = null;
+  let fallbackResult = null;
+  let fallbackError = null;
+
   try {
     const payload = await apiFetch(`/api/notifications/announcements?${params.toString()}`);
-    state.notifications.items = Array.isArray(payload.announcements) ? payload.announcements : [];
-    state.notifications.total = Number(payload.total ?? state.notifications.items.length);
-    state.notifications.lastSyncAt = typeof payload.lastNseSyncAt === "string" ? payload.lastNseSyncAt : null;
-    state.notifications.lastSyncStats =
-      payload.lastNseSyncStats && typeof payload.lastNseSyncStats === "object" ? payload.lastNseSyncStats : null;
+    const items = Array.isArray(payload?.announcements) ? payload.announcements : [];
+    apiResult = {
+      items,
+      total: Number(payload?.total ?? items.length),
+      lastSyncAt: typeof payload?.lastNseSyncAt === "string" ? payload.lastNseSyncAt : null,
+      lastSyncStats: payload?.lastNseSyncStats && typeof payload.lastNseSyncStats === "object" ? payload.lastNseSyncStats : null,
+      source: "backend API"
+    };
   } catch (error) {
-    try {
-      const fallbackResponse = await fetch("./backend/data/nse_announcements.json", { cache: "no-store" });
-      if (!fallbackResponse.ok) {
-        throw new Error(`Fallback file not found (${fallbackResponse.status})`);
-      }
+    apiError = error instanceof Error ? error.message : "Unknown API error";
+  }
 
-      const fallbackPayload = await fallbackResponse.json();
-      const allItems = Array.isArray(fallbackPayload?.announcements) ? fallbackPayload.announcements : [];
-      const filteredItems = symbol
-        ? allItems.filter((item) => String(item.symbol ?? "").toUpperCase() === symbol)
-        : allItems;
+  try {
+    const fallbackResponse = await fetch("./backend/data/nse_announcements.json", { cache: "no-store" });
+    if (!fallbackResponse.ok) {
+      throw new Error(`Fallback file not found (${fallbackResponse.status})`);
+    }
 
-      state.notifications.items = filteredItems.slice(0, limit);
-      state.notifications.total = filteredItems.length;
-      state.notifications.lastSyncAt = typeof fallbackPayload?.lastNseSyncAt === "string" ? fallbackPayload.lastNseSyncAt : null;
-      state.notifications.lastSyncStats =
+    const fallbackPayload = await fallbackResponse.json();
+    const allItems = Array.isArray(fallbackPayload?.announcements) ? fallbackPayload.announcements : [];
+    const filteredItems = symbol
+      ? allItems.filter((item) => String(item.symbol ?? "").toUpperCase() === symbol)
+      : allItems;
+
+    fallbackResult = {
+      items: filteredItems.slice(0, limit),
+      total: filteredItems.length,
+      lastSyncAt: typeof fallbackPayload?.lastNseSyncAt === "string" ? fallbackPayload.lastNseSyncAt : null,
+      lastSyncStats:
         fallbackPayload?.lastNseSyncStats && typeof fallbackPayload.lastNseSyncStats === "object"
           ? fallbackPayload.lastNseSyncStats
-          : null;
-      state.notifications.error = "";
-    } catch {
-      state.notifications.items = [];
-      state.notifications.total = 0;
-      state.notifications.error = error instanceof Error ? error.message : "Unknown error";
-    }
-  } finally {
-    state.notifications.loading = false;
-    renderNotifications();
+          : null,
+      source: "bundled snapshot"
+    };
+  } catch (error) {
+    fallbackError = error instanceof Error ? error.message : "Unknown fallback error";
   }
+
+  const apiLooksReady = apiResult && (apiResult.total > 0 || apiResult.lastSyncAt);
+  const chosenResult = apiLooksReady ? apiResult : fallbackResult ?? apiResult;
+
+  if (chosenResult) {
+    state.notifications.items = chosenResult.items;
+    state.notifications.total = chosenResult.total;
+    state.notifications.lastSyncAt = chosenResult.lastSyncAt;
+    state.notifications.lastSyncStats = chosenResult.lastSyncStats;
+    state.notifications.source = chosenResult.source;
+    state.notifications.error = "";
+  } else {
+    state.notifications.items = [];
+    state.notifications.total = 0;
+    state.notifications.lastSyncAt = null;
+    state.notifications.lastSyncStats = null;
+    state.notifications.source = "";
+    state.notifications.error = apiError || fallbackError || "Unable to load announcements";
+  }
+
+  state.notifications.loading = false;
+  renderNotifications();
 }
 
 function getVisibleArchives() {
