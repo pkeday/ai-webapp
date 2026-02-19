@@ -49,11 +49,16 @@ const aiClassifierEnabled = normalizeText(process.env.AI_CLASSIFIER_ENABLED ?? "
 const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "120", 10);
 const aiConcurrency = Number.parseInt(process.env.AI_CLASSIFICATION_CONCURRENCY ?? "2", 10);
 const aiPdfFetchTimeoutMs = Number.parseInt(process.env.AI_PDF_FETCH_TIMEOUT_MS ?? "30000", 10);
+const aiPdfFetchMaxAttempts = Number.parseInt(process.env.AI_PDF_FETCH_MAX_ATTEMPTS ?? "3", 10);
+const aiPdfParseMaxAttempts = Number.parseInt(process.env.AI_PDF_PARSE_MAX_ATTEMPTS ?? "2", 10);
+const aiPdfRetryDelayMs = Number.parseInt(process.env.AI_PDF_RETRY_DELAY_MS ?? "1200", 10);
+const aiPdfMinBytes = Number.parseInt(process.env.AI_PDF_MIN_BYTES ?? "1024", 10);
 const aiPrimaryMaxPages = Number.parseInt(process.env.AI_PRIMARY_MAX_PAGES ?? "4", 10);
 const aiEscalationMaxPages = Number.parseInt(process.env.AI_ESCALATION_MAX_PAGES ?? "12", 10);
 const aiEscalationConfidenceThreshold = Number.parseFloat(process.env.AI_ESCALATION_CONFIDENCE_THRESHOLD ?? "0.8");
 const aiMinReadableChars = Number.parseInt(process.env.AI_MIN_READABLE_CHARS ?? "700", 10);
 const aiFailureRetryHours = Number.parseInt(process.env.AI_FAILURE_RETRY_HOURS ?? "24", 10);
+const aiTransientFailureRetryMinutes = Number.parseInt(process.env.AI_TRANSIENT_FAILURE_RETRY_MINUTES ?? "60", 10);
 const aiOpenAiApiKey = normalizeApiKeySecret(process.env.OPENAI_API_KEY ?? "");
 const aiOpenAiBaseUrl = process.env.OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "https://api.openai.com/v1";
 const aiOpenAiStage1Model = "gpt-5-nano";
@@ -352,6 +357,133 @@ function sanitizeSensitiveText(value) {
     .replace(/sk-ant-[A-Za-z0-9_\-]{10,}/g, "[REDACTED_ANTHROPIC_KEY]")
     .replace(/AIza[A-Za-z0-9_\-]{10,}/g, "[REDACTED_GEMINI_KEY]")
     .replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, "Bearer [REDACTED_TOKEN]");
+}
+
+function sleep(ms) {
+  const delay = Math.max(0, normalizePositiveInt(ms, 0));
+  if (delay === 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, delay);
+  });
+}
+
+function normalizeAiFailureType(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  const allowed = new Set(["fetch_failed", "parse_failed", "page_invalid", "provider_failed", "input_invalid", "unknown"]);
+  if (allowed.has(normalized)) {
+    return normalized;
+  }
+  return "unknown";
+}
+
+function isTransientAiFailureType(failureType) {
+  const normalized = normalizeAiFailureType(failureType);
+  return normalized === "fetch_failed" || normalized === "parse_failed" || normalized === "page_invalid" || normalized === "provider_failed";
+}
+
+function extractHttpStatusCode(text) {
+  const source = normalizeText(text);
+  if (!source) {
+    return null;
+  }
+
+  const match = source.match(/\bHTTP\s+(\d{3})\b/i);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function inferAiFailureTypeFromMessage(message) {
+  const lower = normalizeText(message).toLowerCase();
+  if (!lower) {
+    return "unknown";
+  }
+
+  if (lower.includes("missing attachment") || lower.includes("missing dedup announcement key") || lower.includes("missing url")) {
+    return "input_invalid";
+  }
+
+  if (lower.includes("invalid page request") || lower.includes("page count is zero") || lower.includes("pdf has no pages")) {
+    return "page_invalid";
+  }
+
+  if (
+    lower.includes("failed to parse pdf") ||
+    lower.includes("failed to load pdf") ||
+    lower.includes("failed to copy pdf pages") ||
+    lower.includes("failed to extract text from pdf")
+  ) {
+    return "parse_failed";
+  }
+
+  if (lower.includes("openai http") || lower.includes("anthropic http") || lower.includes("gemini http")) {
+    return "provider_failed";
+  }
+
+  if (
+    lower.includes("http ") ||
+    lower.includes("network") ||
+    lower.includes("fetch") ||
+    lower.includes("timeout") ||
+    lower.includes("aborted")
+  ) {
+    return "fetch_failed";
+  }
+
+  return "unknown";
+}
+
+function createAiPipelineError(failureType, message, options = {}) {
+  const normalizedType = normalizeAiFailureType(failureType);
+  const safeMessage = sanitizeSensitiveText(message || "Unknown AI pipeline error");
+  const error = new Error(safeMessage);
+  error.aiFailureType = normalizedType;
+  error.aiTransient =
+    typeof options.transient === "boolean" ? options.transient : isTransientAiFailureType(normalizedType);
+  if (options?.details !== undefined) {
+    error.aiFailureDetails = options.details;
+  }
+  return error;
+}
+
+function normalizeAiPipelineError(error, fallbackType = "unknown", fallbackTransient = true) {
+  if (error && typeof error === "object" && typeof error.aiFailureType === "string") {
+    return error;
+  }
+
+  const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown AI pipeline error"));
+  const inferredType = inferAiFailureTypeFromMessage(message);
+  const type = inferredType === "unknown" ? normalizeAiFailureType(fallbackType) : inferredType;
+  return createAiPipelineError(type, message || "Unknown AI pipeline error", {
+    transient: fallbackTransient
+  });
+}
+
+function classifyAiFailure(error) {
+  const normalized = normalizeAiPipelineError(error);
+  const message = sanitizeSensitiveText(normalized.message || "Unknown AI classification error");
+  const failureType = normalizeAiFailureType(normalized.aiFailureType);
+  let retryable = typeof normalized.aiTransient === "boolean" ? normalized.aiTransient : isTransientAiFailureType(failureType);
+  const httpStatus = extractHttpStatusCode(message);
+
+  if (httpStatus !== null) {
+    if (httpStatus === 408 || httpStatus === 425 || httpStatus === 429 || httpStatus >= 500) {
+      retryable = true;
+    } else if (httpStatus >= 400 && httpStatus < 500) {
+      retryable = false;
+    }
+  }
+
+  return {
+    message,
+    failureType,
+    retryable
+  };
 }
 
 function normalizeComparableText(value) {
@@ -778,26 +910,36 @@ async function loadAiLabelStore() {
       const parsed = JSON.parse(text);
       const records = Array.isArray(parsed?.records) ? parsed.records : Array.isArray(parsed) ? parsed : [];
       aiLabelStore.records = records
-        .map((record) => ({
-          dedupAnnouncementKey: normalizeAnnouncementKey(record?.dedupAnnouncementKey),
-          criteriaVersion: normalizeText(record?.criteriaVersion),
-          inputHash: normalizeText(record?.inputHash),
-          status: normalizeText(record?.status).toUpperCase() || "UNKNOWN",
-          label: normalizeText(record?.label),
-          confidence: Number(record?.confidence ?? 0),
-          reason: normalizeText(record?.reason),
-          provider: normalizeText(record?.provider),
-          model: normalizeText(record?.model),
-          attempt: normalizePositiveInt(Number(record?.attempt ?? 1), 1),
-          totalPages: normalizePositiveInt(Number(record?.totalPages ?? 1), 1),
-          pagesProcessed: normalizePositiveInt(Number(record?.pagesProcessed ?? 1), 1),
-          machineReadable: Boolean(record?.machineReadable),
-          sourceAttachmentUrl: normalizeText(record?.sourceAttachmentUrl),
-          sourcePdfHash: normalizeText(record?.sourcePdfHash),
-          updatedAt: normalizeText(record?.updatedAt || record?.classifiedAt || new Date().toISOString()),
-          error: normalizeText(record?.error),
-          promptVersion: normalizeText(record?.promptVersion || aiCriteriaVersion)
-        }))
+        .map((record) => {
+          const failureType = normalizeAiFailureType(record?.failureType ?? record?.failure_type);
+          const retryable =
+            record?.retryable === undefined || record?.retryable === null
+              ? isTransientAiFailureType(failureType)
+              : Boolean(record?.retryable);
+
+          return {
+            dedupAnnouncementKey: normalizeAnnouncementKey(record?.dedupAnnouncementKey),
+            criteriaVersion: normalizeText(record?.criteriaVersion),
+            inputHash: normalizeText(record?.inputHash),
+            status: normalizeText(record?.status).toUpperCase() || "UNKNOWN",
+            label: normalizeText(record?.label),
+            confidence: Number(record?.confidence ?? 0),
+            reason: normalizeText(record?.reason),
+            provider: normalizeText(record?.provider),
+            model: normalizeText(record?.model),
+            attempt: normalizePositiveInt(Number(record?.attempt ?? 1), 1),
+            totalPages: normalizePositiveInt(Number(record?.totalPages ?? 1), 1),
+            pagesProcessed: normalizePositiveInt(Number(record?.pagesProcessed ?? 1), 1),
+            machineReadable: Boolean(record?.machineReadable),
+            sourceAttachmentUrl: normalizeText(record?.sourceAttachmentUrl),
+            sourcePdfHash: normalizeText(record?.sourcePdfHash),
+            updatedAt: normalizeText(record?.updatedAt || record?.classifiedAt || new Date().toISOString()),
+            error: normalizeText(record?.error),
+            failureType,
+            retryable,
+            promptVersion: normalizeText(record?.promptVersion || aiCriteriaVersion)
+          };
+        })
         .filter((record) => Boolean(record.dedupAnnouncementKey));
       aiLabelStore.lastSyncAt =
         typeof parsed?.lastSyncAt === "string" ? parsed.lastSyncAt : typeof parsed?.updatedAt === "string" ? parsed.updatedAt : null;
@@ -882,35 +1024,96 @@ function upsertAiLabelRecord(record) {
   }
 }
 
-async function fetchBinary(url, timeoutMs) {
+function buildPdfFetchHeaders(browserLikeHeaders = false) {
+  const headers = {
+    Accept: "application/pdf,*/*"
+  };
+
+  if (!browserLikeHeaders) {
+    return headers;
+  }
+
+  return {
+    ...headers,
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+  };
+}
+
+async function fetchBinary(url, timeoutMs, options = {}) {
   const normalizedUrl = normalizeText(url);
   if (!normalizedUrl) {
-    throw new Error("Missing URL");
+    throw createAiPipelineError("input_invalid", "Missing URL", { transient: false });
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), normalizePositiveInt(timeoutMs, 30_000));
 
   try {
-    const response = await fetch(normalizedUrl, {
-      method: "GET",
-      redirect: "follow",
-      signal: controller.signal
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    let response;
+    try {
+      response = await fetch(normalizedUrl, {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: buildPdfFetchHeaders(options?.browserLikeHeaders === true)
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw createAiPipelineError("fetch_failed", "PDF download timed out", { transient: true });
+      }
+
+      throw createAiPipelineError("fetch_failed", `PDF download failed: ${sanitizeSensitiveText(error?.message || String(error))}`, {
+        transient: true
+      });
     }
 
+    if (!response.ok) {
+      throw createAiPipelineError("fetch_failed", `HTTP ${response.status}`, {
+        transient: response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500
+      });
+    }
+
+    const contentType = normalizeText(response.headers.get("content-type")).toLowerCase();
     const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
+    const bytes = Buffer.from(arrayBuffer);
+    const minBytes = Math.max(256, normalizePositiveInt(aiPdfMinBytes, 1024));
+    if (bytes.length < minBytes) {
+      throw createAiPipelineError("fetch_failed", `Downloaded payload too small (${bytes.length} bytes)`, { transient: true });
+    }
+
+    if (contentType && !contentType.includes("pdf") && !contentType.includes("octet-stream")) {
+      throw createAiPipelineError("fetch_failed", `Unexpected content-type '${contentType}'`, { transient: false });
+    }
+
+    return {
+      bytes,
+      contentType,
+      httpStatus: response.status
+    };
   } finally {
     clearTimeout(timeout);
   }
 }
 
 async function slicePdfToFirstPages(pdfBuffer, maxPages) {
-  const sourceDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+  let sourceDoc;
+  try {
+    sourceDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+  } catch (error) {
+    throw createAiPipelineError("parse_failed", `Failed to parse PDF: ${sanitizeSensitiveText(error?.message || String(error))}`, {
+      transient: true
+    });
+  }
+
   const totalPages = sourceDoc.getPageCount();
+  if (!Number.isFinite(totalPages) || totalPages < 1) {
+    throw createAiPipelineError("page_invalid", "PDF page count is zero", { transient: true });
+  }
+
   const safeMaxPages = Math.max(1, normalizePositiveInt(maxPages, 4));
   const pagesToKeep = Math.min(totalPages, safeMaxPages);
 
@@ -924,12 +1127,29 @@ async function slicePdfToFirstPages(pdfBuffer, maxPages) {
 
   const targetDoc = await PDFDocument.create();
   const pageIndexes = Array.from({ length: pagesToKeep }, (_, index) => index);
-  const copiedPages = await targetDoc.copyPages(sourceDoc, pageIndexes);
+  let copiedPages;
+  try {
+    copiedPages = await targetDoc.copyPages(sourceDoc, pageIndexes);
+  } catch (error) {
+    throw createAiPipelineError(
+      "parse_failed",
+      `Failed to copy PDF pages: ${sanitizeSensitiveText(error?.message || String(error))}`,
+      { transient: true }
+    );
+  }
   for (const page of copiedPages) {
     targetDoc.addPage(page);
   }
 
-  const truncatedBytes = await targetDoc.save();
+  let truncatedBytes;
+  try {
+    truncatedBytes = await targetDoc.save();
+  } catch (error) {
+    throw createAiPipelineError("parse_failed", `Failed to save sliced PDF: ${sanitizeSensitiveText(error?.message || String(error))}`, {
+      transient: true
+    });
+  }
+
   return {
     totalPages,
     pagesProcessed: pagesToKeep,
@@ -945,14 +1165,47 @@ async function extractTextFromPdfPages(pdfBuffer, maxPages) {
     isEvalSupported: false,
     verbosity: pdfjsLib.VerbosityLevel?.ERRORS ?? 0
   });
-  const document = await loadingTask.promise;
+  let document;
+  try {
+    document = await loadingTask.promise;
+  } catch (error) {
+    throw createAiPipelineError("parse_failed", `Failed to load PDF: ${sanitizeSensitiveText(error?.message || String(error))}`, {
+      transient: true
+    });
+  }
+
   const totalPages = document.numPages;
-  const pagesToProcess = Math.max(1, Math.min(totalPages, normalizePositiveInt(maxPages, 4)));
+  if (!Number.isFinite(totalPages) || totalPages < 1) {
+    throw createAiPipelineError("page_invalid", "PDF has no pages", { transient: true });
+  }
+
+  const safeMaxPages = Math.max(1, normalizePositiveInt(maxPages, 4));
+  const pagesToProcess = Math.min(totalPages, safeMaxPages);
   const pageTexts = [];
 
   for (let pageNumber = 1; pageNumber <= pagesToProcess; pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const textContent = await page.getTextContent();
+    let page;
+    try {
+      page = await document.getPage(pageNumber);
+    } catch (error) {
+      throw createAiPipelineError(
+        "page_invalid",
+        `Invalid page request while extracting text (page ${pageNumber} of ${totalPages}): ${sanitizeSensitiveText(
+          error?.message || String(error)
+        )}`,
+        { transient: true }
+      );
+    }
+
+    let textContent;
+    try {
+      textContent = await page.getTextContent();
+    } catch (error) {
+      throw createAiPipelineError("parse_failed", `Failed to extract text from PDF: ${sanitizeSensitiveText(error?.message || String(error))}`, {
+        transient: true
+      });
+    }
+
     const pageText = textContent.items
       .map((item) => normalizeText(item?.str))
       .filter(Boolean)
@@ -969,6 +1222,81 @@ async function extractTextFromPdfPages(pdfBuffer, maxPages) {
     text: combinedText,
     textLength: combinedText.length
   };
+}
+
+async function preparePdfForClassification(attachmentUrl) {
+  const maxFetchAttempts = Math.min(5, Math.max(1, normalizePositiveInt(aiPdfFetchMaxAttempts, 3)));
+  const maxParseAttempts = Math.min(4, Math.max(1, normalizePositiveInt(aiPdfParseMaxAttempts, 2)));
+  const retryDelayMs = Math.max(200, normalizePositiveInt(aiPdfRetryDelayMs, 1200));
+  let lastError = null;
+
+  for (let fetchAttempt = 1; fetchAttempt <= maxFetchAttempts; fetchAttempt += 1) {
+    let fetched;
+    try {
+      fetched = await fetchBinary(attachmentUrl, aiPdfFetchTimeoutMs, {
+        browserLikeHeaders: fetchAttempt > 1
+      });
+    } catch (error) {
+      const normalized = normalizeAiPipelineError(error, "fetch_failed", true);
+      lastError = normalized;
+      if (fetchAttempt < maxFetchAttempts && isTransientAiFailureType(normalized.aiFailureType)) {
+        await sleep(retryDelayMs * fetchAttempt);
+        continue;
+      }
+      throw normalized;
+    }
+
+    const pdfBuffer = fetched.bytes;
+    for (let parseAttempt = 1; parseAttempt <= maxParseAttempts; parseAttempt += 1) {
+      try {
+        const stage1Pdf = await slicePdfToFirstPages(pdfBuffer, aiPrimaryMaxPages);
+        const stage1Text = await extractTextFromPdfPages(stage1Pdf.bytes, stage1Pdf.pagesProcessed);
+        return {
+          pdfBuffer,
+          stage1Pdf,
+          stage1Text,
+          prepError: null,
+          usedRawPdfFallback: false
+        };
+      } catch (error) {
+        const normalized = normalizeAiPipelineError(error, "parse_failed", true);
+        lastError = normalized;
+        if (parseAttempt < maxParseAttempts && isTransientAiFailureType(normalized.aiFailureType)) {
+          await sleep(retryDelayMs * parseAttempt);
+          continue;
+        }
+        break;
+      }
+    }
+
+    if (fetchAttempt < maxFetchAttempts && lastError && isTransientAiFailureType(lastError.aiFailureType)) {
+      await sleep(retryDelayMs * fetchAttempt);
+      continue;
+    }
+
+    if (lastError && (lastError.aiFailureType === "parse_failed" || lastError.aiFailureType === "page_invalid")) {
+      return {
+        pdfBuffer,
+        stage1Pdf: {
+          totalPages: 1,
+          pagesProcessed: 1,
+          bytes: pdfBuffer
+        },
+        stage1Text: {
+          totalPages: 0,
+          pagesProcessed: 0,
+          text: "",
+          textLength: 0
+        },
+        prepError: lastError,
+        usedRawPdfFallback: true
+      };
+    }
+
+    throw lastError ?? createAiPipelineError("unknown", "Unknown PDF preparation error", { transient: true });
+  }
+
+  throw lastError ?? createAiPipelineError("unknown", "Unknown PDF preparation error", { transient: true });
 }
 
 function clampConfidence(value) {
@@ -1228,18 +1556,19 @@ async function classifyDedupAnnouncement(announcement) {
     announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
   );
   if (!dedupAnnouncementKey) {
-    throw new Error("Missing dedup announcement key");
+    throw createAiPipelineError("input_invalid", "Missing dedup announcement key", { transient: false });
   }
 
   const attachmentUrl = normalizeText(announcement?.attachment_url);
   if (!attachmentUrl) {
-    throw new Error("Missing attachment URL");
+    throw createAiPipelineError("input_invalid", "Missing attachment URL", { transient: false });
   }
 
-  const pdfBuffer = await fetchBinary(attachmentUrl, aiPdfFetchTimeoutMs);
-  const stage1Pdf = await slicePdfToFirstPages(pdfBuffer, aiPrimaryMaxPages);
-  const stage1Text = await extractTextFromPdfPages(stage1Pdf.bytes, stage1Pdf.pagesProcessed);
-  const machineReadable = stage1Text.textLength >= normalizePositiveInt(aiMinReadableChars, 700);
+  const preparedPdf = await preparePdfForClassification(attachmentUrl);
+  const pdfBuffer = preparedPdf.pdfBuffer;
+  const stage1Pdf = preparedPdf.stage1Pdf;
+  const stage1Text = preparedPdf.stage1Text;
+  const machineReadable = !preparedPdf.usedRawPdfFallback && stage1Text.textLength >= normalizePositiveInt(aiMinReadableChars, 700);
   const criteriaVersion = aiCriteriaVersion;
   const inputHash = buildAiInputHash(announcement, criteriaVersion);
 
@@ -1328,9 +1657,27 @@ async function classifyDedupAnnouncement(announcement) {
   const shouldEscalate = stage1.needsEscalation || stage1.confidence < confidenceThreshold;
 
   if (shouldEscalate) {
-    const stage2Pdf = await slicePdfToFirstPages(pdfBuffer, aiEscalationMaxPages);
-    pagesProcessed = stage2Pdf.pagesProcessed;
-    const stage2Text = machineReadable ? await extractTextFromPdfPages(stage2Pdf.bytes, stage2Pdf.pagesProcessed) : null;
+    let stage2Pdf = stage1Pdf;
+    let stage2Text = machineReadable ? stage1Text : null;
+
+    if (machineReadable) {
+      try {
+        stage2Pdf = await slicePdfToFirstPages(pdfBuffer, aiEscalationMaxPages);
+        pagesProcessed = stage2Pdf.pagesProcessed;
+        stage2Text = await extractTextFromPdfPages(stage2Pdf.bytes, stage2Pdf.pagesProcessed);
+      } catch (error) {
+        stage2Pdf = stage1Pdf;
+        stage2Text = stage1Text;
+      }
+    } else {
+      stage2Pdf = {
+        totalPages: stage1Pdf.totalPages,
+        pagesProcessed: stage1Pdf.pagesProcessed,
+        bytes: pdfBuffer
+      };
+      pagesProcessed = stage2Pdf.pagesProcessed;
+    }
+
     const stage2Prompt = buildClassificationUserPrompt(
       announcement,
       criteriaVersion,
@@ -1429,7 +1776,9 @@ async function classifyDedupAnnouncement(announcement) {
     sourceAttachmentUrl: attachmentUrl,
     sourcePdfHash: normalizeText(announcement?.pdf_hash),
     promptVersion: aiCriteriaVersion,
-    error: ""
+    error: "",
+    failureType: "",
+    retryable: false
   };
 }
 
@@ -1496,7 +1845,11 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
 
   const queue = [];
   let skippedExistingCount = 0;
-  const failureRetryWindowMs = normalizePositiveInt(aiFailureRetryHours, 24) * 60 * 60 * 1000;
+  const legacyFailureRetryWindowMs = normalizePositiveInt(aiFailureRetryHours, 24) * 60 * 60 * 1000;
+  const transientFailureRetryWindowMs = Math.min(
+    legacyFailureRetryWindowMs,
+    normalizePositiveInt(aiTransientFailureRetryMinutes, 60) * 60 * 1000
+  );
 
   for (const item of candidates) {
     const dedupAnnouncementKey = normalizeAnnouncementKey(
@@ -1525,8 +1878,19 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
       normalizeText(existingRecord.criteriaVersion) === aiCriteriaVersion &&
       normalizeText(existingRecord.inputHash) === inputHash
     ) {
+      const failureType = normalizeAiFailureType(existingRecord?.failureType);
+      const retryable =
+        typeof existingRecord?.retryable === "boolean"
+          ? existingRecord.retryable
+          : isTransientAiFailureType(failureType);
+
+      if (!retryable) {
+        skippedExistingCount += 1;
+        continue;
+      }
+
       const failedAtMs = parseTimestampToMillis(existingRecord.updatedAt);
-      if (failedAtMs && Date.now() - failedAtMs < failureRetryWindowMs) {
+      if (failedAtMs && Date.now() - failedAtMs < transientFailureRetryWindowMs) {
         skippedExistingCount += 1;
         continue;
       }
@@ -1577,7 +1941,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
       upsertAiLabelRecord(result);
       return { key: dedupAnnouncementKey, ok: true, provider: result.provider, model: result.model };
     } catch (error) {
-      const message = sanitizeSensitiveText(error instanceof Error ? error.message : "Unknown AI classification error");
+      const failure = classifyAiFailure(error);
       upsertAiLabelRecord({
         dedupAnnouncementKey,
         inputHash,
@@ -1594,9 +1958,11 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
         sourceAttachmentUrl: normalizeText(announcement?.attachment_url),
         sourcePdfHash: normalizeText(announcement?.pdf_hash),
         promptVersion: aiCriteriaVersion,
-        error: message
+        error: failure.message,
+        failureType: failure.failureType,
+        retryable: failure.retryable
       });
-      return { key: dedupAnnouncementKey, ok: false, error: message };
+      return { key: dedupAnnouncementKey, ok: false, error: failure.message, failureType: failure.failureType };
     }
   });
 
@@ -1609,7 +1975,8 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     .slice(0, 3)
     .map((result) => ({
       key: result.key,
-      error: sanitizeSensitiveText(result.error || "Unknown classification failure")
+      error: sanitizeSensitiveText(result.error || "Unknown classification failure"),
+      failureType: normalizeAiFailureType(result.failureType)
     }));
 
   return {
@@ -1644,6 +2011,8 @@ function enrichDedupAnnouncementWithAi(announcement) {
       ai_confidence: null,
       ai_reason: null,
       ai_error: null,
+      ai_failure_type: null,
+      ai_retryable: null,
       ai_status: "MISSING"
     };
   }
@@ -1660,6 +2029,8 @@ function enrichDedupAnnouncementWithAi(announcement) {
     ai_confidence: isSuccess ? clampConfidence(aiRecord.confidence) : null,
     ai_reason: successReason || failureReason,
     ai_error: failureReason,
+    ai_failure_type: isFailed ? normalizeAiFailureType(aiRecord.failureType) : null,
+    ai_retryable: isFailed ? Boolean(aiRecord.retryable) : null,
     ai_status: aiStatus || "UNKNOWN",
     ai_provider: aiRecord.provider || null,
     ai_model: aiRecord.model || null

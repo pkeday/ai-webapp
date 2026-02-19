@@ -43,11 +43,17 @@ Production setup in this project:
 - `AI_CRITERIA_VERSION`: Prompt/version tag used for idempotent reclassification (default: `v1`).
 - `AI_MAX_ITEMS_PER_CRON`: Max dedup announcements sent to models per cron run (default: `120`).
 - `AI_CLASSIFICATION_CONCURRENCY`: Parallel AI classification workers (default: `2`).
+- `AI_PDF_FETCH_TIMEOUT_MS`: Timeout for PDF download before classification (default: `30000`).
+- `AI_PDF_FETCH_MAX_ATTEMPTS`: Max PDF download attempts (default: `3`).
+- `AI_PDF_PARSE_MAX_ATTEMPTS`: Max parse attempts per fetched PDF (default: `2`).
+- `AI_PDF_RETRY_DELAY_MS`: Base delay between PDF retries in milliseconds (default: `1200`).
+- `AI_PDF_MIN_BYTES`: Minimum PDF payload size before parsing (default: `1024`).
 - `AI_PRIMARY_MAX_PAGES`: Pages sent in stage-1 classification (default: `4`).
 - `AI_ESCALATION_MAX_PAGES`: Pages sent in stage-2 escalation (default: `12`).
 - `AI_ESCALATION_CONFIDENCE_THRESHOLD`: Escalation threshold (default: `0.8`).
 - `AI_MIN_READABLE_CHARS`: Min extracted text chars to treat PDF as machine-readable (default: `700`).
 - `AI_FAILURE_RETRY_HOURS`: Retry cooldown for failed classifications (default: `24`).
+- `AI_TRANSIENT_FAILURE_RETRY_MINUTES`: Retry cooldown for transient failures (`fetch_failed`, `parse_failed`, `page_invalid`, `provider_failed`; default: `60`).
 - `OPENAI_API_KEY`: OpenAI API key for machine-readable announcements.
 - OpenAI models are fixed in code to `gpt-5-nano` (stage-1) and `gpt-5-mini` (stage-2).
 - `GEMINI_API_KEY`: Gemini API key for scanned/image-heavy announcements.

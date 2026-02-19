@@ -1111,7 +1111,9 @@ function renderNotifications() {
             aiNotes = item.ai_reason || "-";
           } else if (aiStatus === "FAILED") {
             aiLabel = "Failed";
-            aiNotes = item.ai_error || item.ai_reason || "Unknown AI classification error";
+            const failureType = String(item.ai_failure_type || "").trim();
+            const failureMessage = item.ai_error || item.ai_reason || "Unknown AI classification error";
+            aiNotes = failureType ? `${failureType}: ${failureMessage}` : failureMessage;
           } else if (aiStatus === "MISSING") {
             aiLabel = "Pending";
             aiNotes = "Awaiting AI classification";
