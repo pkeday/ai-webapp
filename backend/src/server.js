@@ -176,7 +176,9 @@ const aiClassificationCategories = [
   "postal_ballot",
   "esops",
   "insider_trading",
+  "substantial_transaction",
   "share_pledge",
+  "change_in_auditor",
   "business_update",
   "surveillance_reply",
   "record_date_intimation",
@@ -216,7 +218,10 @@ const aiCategoryDefinitions = {
   postal_ballot: "Postal ballot process or results disclosure.",
   esops: "ESOP/SAR/share-based employee benefit disclosure.",
   insider_trading: "Insider trade transaction disclosures.",
+  substantial_transaction:
+    "Major acquisition/disposal by a significant shareholder who is not disclosed as promoter/KMP/insider.",
   share_pledge: "Pledge/unpledge of promoter/KMP shares.",
+  change_in_auditor: "Appointment/resignation/replacement/reclassification of statutory or secretarial auditor.",
   business_update: "Operational/strategic business update.",
   surveillance_reply: "Reply to exchange surveillance/price-volume query.",
   record_date_intimation: "Record date/book closure intimation.",
@@ -269,6 +274,8 @@ const aiSystemPromptBaseSections = [
   "5) 1x1, one-on-one, or investor meet without institutional host/conference name maps to analyst_meeting.",
   "6) External service-provider legal/name changes map to others (not change_in_management).",
   "7) If control is gained use ma; if control is reduced/lost use divestment.",
+  "8) Auditor appointment/resignation/replacement maps to change_in_auditor.",
+  "9) Major shareholding transactions by non-promoter/non-insider holders map to substantial_transaction.",
   "Allowed categories and concise guidance:",
   aiCategoryGuidanceText,
   "Set needs_escalation true when confidence is below 0.8 or evidence is weak."
@@ -277,7 +284,9 @@ const aiManualPromptRules = [
   "If the filing is a schedule/intimation of analyst or institutional investor meetings (one-on-one/group, physical/virtual), classify as analyst_meeting unless it explicitly states the interaction is an earnings/results call.",
   "Use earning_call_registration only when the meeting/call is explicitly tied to discussion of quarterly/annual financial results or earnings performance.",
   "Letters to shareholders/CEO narrative updates remain others even if they casually mention rescheduling a call; do not classify these as analyst_meeting unless the primary document purpose is a formal analyst/investor meet notice.",
-  "For continuation updates that reference prior intimations and forward a material-subsidiary disclosure tied to a strategic transaction context, prefer ma (or divestment if the text indicates disposal/loss of control) instead of others."
+  "For continuation updates that reference prior intimations and forward a material-subsidiary disclosure tied to a strategic transaction context, prefer ma (or divestment if the text indicates disposal/loss of control) instead of others.",
+  "Use substantial_transaction only for sizeable holding changes by non-promoter/non-insider investors; promoter/KMP/insider trades stay in insider_trading or share_pledge as applicable.",
+  "Use change_in_auditor for statutory/secretarial auditor appointment, resignation, removal, cessation or replacement disclosures."
 ];
 
 const aiLabelStore = {
