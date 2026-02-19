@@ -22,13 +22,17 @@ Open the URL shown in terminal:
 
 ## 2) Create a GitHub repo and push code
 
-If this is your first time:
+This project is already initialized as a local git repo with an initial commit.
+Create an empty repo on GitHub (no README/license), then run:
 
 ```bash
 cd /Users/parikshitkabra/Projects/codex_projects/ai-webapp
-git init
-git add .
-git commit -m "Initial AI web app starter"
+./scripts/connect-github.sh https://github.com/YOUR_USERNAME/YOUR_REPO.git
+```
+
+If you prefer manual commands:
+
+```bash
 git branch -M main
 git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
 git push -u origin main
