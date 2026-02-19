@@ -1315,6 +1315,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     }
 
     if (
+      !forceEnabled &&
       existingRecord &&
       existingRecord.status === "FAILED" &&
       normalizeText(existingRecord.criteriaVersion) === aiCriteriaVersion &&
