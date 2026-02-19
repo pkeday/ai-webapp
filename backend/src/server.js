@@ -2,6 +2,8 @@ import { createServer } from "node:http";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { PDFDocument } from "pdf-lib";
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import { fetchNseAnnouncements, deriveAnnouncementKey, getDefaultDateRange } from "./nseAnnouncements.js";
 import {
   fetchBseAnnouncements,
@@ -41,6 +43,27 @@ const dedupIncrementalMinCandidates = Number.parseInt(process.env.DEDUP_INCREMEN
 const dedupIncrementalMaxCandidates = Number.parseInt(process.env.DEDUP_INCREMENTAL_MAX_CANDIDATES ?? "2500", 10);
 const pdfHashTimeoutMs = Number.parseInt(process.env.PDF_HASH_TIMEOUT_MS ?? "20000", 10);
 const pdfHashConcurrency = Number.parseInt(process.env.PDF_HASH_CONCURRENCY ?? "4", 10);
+const aiLabelsStoragePath = resolve(process.cwd(), process.env.AI_LABELS_STORAGE_FILE ?? "data/announcement_ai_labels.json");
+const aiCriteriaVersion = process.env.AI_CRITERIA_VERSION ?? "v1";
+const aiClassifierEnabled = normalizeText(process.env.AI_CLASSIFIER_ENABLED ?? "false").toLowerCase() === "true";
+const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "120", 10);
+const aiConcurrency = Number.parseInt(process.env.AI_CLASSIFICATION_CONCURRENCY ?? "2", 10);
+const aiPdfFetchTimeoutMs = Number.parseInt(process.env.AI_PDF_FETCH_TIMEOUT_MS ?? "30000", 10);
+const aiPrimaryMaxPages = Number.parseInt(process.env.AI_PRIMARY_MAX_PAGES ?? "4", 10);
+const aiEscalationMaxPages = Number.parseInt(process.env.AI_ESCALATION_MAX_PAGES ?? "12", 10);
+const aiEscalationConfidenceThreshold = Number.parseFloat(process.env.AI_ESCALATION_CONFIDENCE_THRESHOLD ?? "0.8");
+const aiMinReadableChars = Number.parseInt(process.env.AI_MIN_READABLE_CHARS ?? "700", 10);
+const aiFailureRetryHours = Number.parseInt(process.env.AI_FAILURE_RETRY_HOURS ?? "24", 10);
+const aiOpenAiApiKeyRaw = process.env.OPENAI_API_KEY ?? "";
+const aiOpenAiApiKey = aiOpenAiApiKeyRaw.includes("*") ? "" : aiOpenAiApiKeyRaw;
+const aiOpenAiBaseUrl = process.env.OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "https://api.openai.com/v1";
+const aiOpenAiStage1Model = process.env.AI_OPENAI_STAGE1_MODEL ?? "gpt-5-nano";
+const aiOpenAiStage2Model = process.env.AI_OPENAI_STAGE2_MODEL ?? "gpt-5-mini";
+const aiGeminiApiKeyRaw = process.env.GEMINI_API_KEY ?? "";
+const aiGeminiApiKey = aiGeminiApiKeyRaw.includes("*") ? "" : aiGeminiApiKeyRaw;
+const aiGeminiBaseUrl = process.env.GEMINI_BASE_URL?.trim().replace(/\/$/, "") || "https://generativelanguage.googleapis.com/v1beta";
+const aiGeminiStage1Model = process.env.AI_GEMINI_STAGE1_MODEL ?? "gemini-2.5-flash-lite";
+const aiGeminiStage2Model = process.env.AI_GEMINI_STAGE2_MODEL ?? "gemini-2.5-flash";
 
 const notes = [];
 let noteId = 1;
@@ -96,6 +119,142 @@ const stores = {
     syncInFlight: null,
     sourceFingerprint: ""
   }
+};
+
+const aiClassificationCategories = [
+  "earnings_results_boardmeeting",
+  "results_intimation_date",
+  "earning_call_registration",
+  "earning_call_audio_recording",
+  "earning_call_transcript",
+  "analyst_meeting",
+  "participating_in_conference",
+  "investor_day",
+  "agm_announcement",
+  "board_meeting",
+  "board_meeting_intimation",
+  "press_release",
+  "auditors_report",
+  "annual_report",
+  "earning_presentation",
+  "ma",
+  "divestment",
+  "contract_awarded",
+  "fund_raising",
+  "change_in_management",
+  "credit_rating",
+  "trading_stopping",
+  "investor_conference",
+  "not_eligible",
+  "newspaper_announcement",
+  "agm_outcome",
+  "postal_ballot",
+  "esops",
+  "insider_trading",
+  "share_pledge",
+  "business_update",
+  "surveillance_reply",
+  "record_date_intimation",
+  "share_transfer_relodgement_report",
+  "certificate_under_regulation_74_5",
+  "non_applicability_regulation_27_2",
+  "others"
+];
+
+const aiCategoryDefinitions = {
+  earnings_results_boardmeeting: "Filed financial results with actual statements approved by board.",
+  results_intimation_date: "Notice of board meeting date to consider/approve results.",
+  earning_call_registration: "Earnings/results discussion call or meeting schedule.",
+  earning_call_audio_recording: "Audio recording link/publication of earnings call.",
+  earning_call_transcript: "Transcript publication of earnings call.",
+  analyst_meeting: "1x1/small investor or analyst interaction, non-conference.",
+  participating_in_conference: "Named institution-hosted conference participation.",
+  investor_day: "Company-hosted investor day event.",
+  agm_announcement: "AGM/EGM notice announcing date/time/venue.",
+  board_meeting: "Board meeting outcome not primarily quarterly results filing.",
+  board_meeting_intimation: "Board meeting intimation not about results approval.",
+  press_release: "Document explicitly identified as press release.",
+  auditors_report: "Auditor report/certificate on financial statements/results.",
+  annual_report: "Comprehensive annual report publication.",
+  earning_presentation: "Investor presentation focused on financial results/business highlights.",
+  ma: "Acquisition/merger/amalgamation or control increase.",
+  divestment: "Sale/disposal/dilution resulting in reduced/lost control.",
+  contract_awarded: "Order win/tender/contract award disclosure.",
+  fund_raising: "Capital raise/security issuance-related disclosure.",
+  change_in_management: "Management/promoter/KMP changes of listed company itself.",
+  credit_rating: "Credit rating action/update.",
+  trading_stopping: "Trading halt/window closure/suspension related note.",
+  investor_conference: "Institution-hosted multi-company investor conference.",
+  not_eligible: "Ineligibility/non-eligibility disclosure.",
+  newspaper_announcement: "Newspaper publication/advertisement disclosure.",
+  agm_outcome: "AGM/EGM outcome and voting result publication.",
+  postal_ballot: "Postal ballot process or results disclosure.",
+  esops: "ESOP/SAR/share-based employee benefit disclosure.",
+  insider_trading: "Insider trade transaction disclosures.",
+  share_pledge: "Pledge/unpledge of promoter/KMP shares.",
+  business_update: "Operational/strategic business update.",
+  surveillance_reply: "Reply to exchange surveillance/price-volume query.",
+  record_date_intimation: "Record date/book closure intimation.",
+  share_transfer_relodgement_report: "Physical share transfer relodgement report.",
+  certificate_under_regulation_74_5: "Compliance certificate under Regulation 74(5).",
+  non_applicability_regulation_27_2: "Non-applicability declaration under Regulation 27(2).",
+  others: "Use only when no listed category is defensible."
+};
+
+const aiCategoryGuidanceText = aiClassificationCategories
+  .map((category) => `- ${category}: ${aiCategoryDefinitions[category] || "Use only when applicable."}`)
+  .join("\n");
+
+const aiJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["category", "confidence", "reason", "needs_escalation"],
+  properties: {
+    category: {
+      type: "string",
+      enum: aiClassificationCategories
+    },
+    confidence: {
+      type: "number",
+      minimum: 0,
+      maximum: 1
+    },
+    reason: {
+      type: "string",
+      minLength: 4,
+      maxLength: 600
+    },
+    needs_escalation: {
+      type: "boolean"
+    }
+  }
+};
+
+const aiSystemPrompt = [
+  "You are a strict corporate announcement classifier for Indian listed-company disclosures.",
+  "Return ONLY valid JSON matching the required schema.",
+  "Use only categories from the provided enum; never invent a category.",
+  "Prefer specific categories over others. Use others only as last resort.",
+  "Priority rules:",
+  "1) Newspaper publication mentions always map to newspaper_announcement.",
+  "2) Earnings-call scheduling/interaction about discussing results maps to earning_call_registration.",
+  "3) Board meeting notice for approving results maps to results_intimation_date.",
+  "4) Regulatory filing with approved financial statements maps to earnings_results_boardmeeting.",
+  "5) 1x1, one-on-one, or investor meet without institutional host/conference name maps to analyst_meeting.",
+  "6) External service-provider legal/name changes map to others (not change_in_management).",
+  "7) If control is gained use ma; if control is reduced/lost use divestment.",
+  "Allowed categories and concise guidance:",
+  aiCategoryGuidanceText,
+  "Set needs_escalation true when confidence is below 0.8 or evidence is weak."
+].join("\n");
+
+const aiLabelStore = {
+  loaded: false,
+  syncInFlight: null,
+  records: [],
+  byKey: new Map(),
+  byInputHash: new Map(),
+  lastSyncAt: null
 };
 
 function getAllowedOrigin(originHeader) {
@@ -509,6 +668,762 @@ async function mapWithConcurrency(items, maxConcurrency, mapper) {
   return results;
 }
 
+function isAiClassificationEnabled() {
+  return aiClassifierEnabled && Boolean(aiOpenAiApiKey || aiGeminiApiKey);
+}
+
+function normalizeAnnouncementKey(value) {
+  const normalized = normalizeText(value);
+  return normalized || null;
+}
+
+function buildAiInputHash(announcement, criteriaVersion = aiCriteriaVersion) {
+  const key = normalizeAnnouncementKey(
+    announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
+  );
+  const payload = {
+    criteriaVersion: normalizeText(criteriaVersion),
+    key: key ?? "",
+    isin: normalizeIsin(announcement?.isin) ?? "",
+    pdfHash: normalizeText(announcement?.pdf_hash),
+    attachmentUrl: normalizeText(announcement?.attachment_url),
+    symbol: normalizeText(announcement?.symbol),
+    company: normalizeText(announcement?.company),
+    type: normalizeText(announcement?.type),
+    timestamp: normalizeText(announcement?.timestamp)
+  };
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
+function indexAiLabelStore() {
+  aiLabelStore.byKey = new Map();
+  aiLabelStore.byInputHash = new Map();
+
+  for (const record of aiLabelStore.records) {
+    const key = normalizeAnnouncementKey(record?.dedupAnnouncementKey);
+    const criteriaVersion = normalizeText(record?.criteriaVersion);
+    const inputHash = normalizeText(record?.inputHash);
+    if (!key) {
+      continue;
+    }
+
+    if (criteriaVersion === aiCriteriaVersion) {
+      aiLabelStore.byKey.set(key, record);
+    }
+
+    if (criteriaVersion === aiCriteriaVersion && record?.status === "SUCCESS" && inputHash) {
+      aiLabelStore.byInputHash.set(inputHash, record);
+    }
+  }
+}
+
+async function loadAiLabelStore() {
+  if (aiLabelStore.loaded) {
+    return;
+  }
+
+  if (aiLabelStore.syncInFlight) {
+    await aiLabelStore.syncInFlight;
+    return;
+  }
+
+  aiLabelStore.syncInFlight = (async () => {
+    try {
+      const text = await readFile(aiLabelsStoragePath, "utf8");
+      const parsed = JSON.parse(text);
+      const records = Array.isArray(parsed?.records) ? parsed.records : Array.isArray(parsed) ? parsed : [];
+      aiLabelStore.records = records
+        .map((record) => ({
+          dedupAnnouncementKey: normalizeAnnouncementKey(record?.dedupAnnouncementKey),
+          criteriaVersion: normalizeText(record?.criteriaVersion),
+          inputHash: normalizeText(record?.inputHash),
+          status: normalizeText(record?.status).toUpperCase() || "UNKNOWN",
+          label: normalizeText(record?.label),
+          confidence: Number(record?.confidence ?? 0),
+          reason: normalizeText(record?.reason),
+          provider: normalizeText(record?.provider),
+          model: normalizeText(record?.model),
+          attempt: normalizePositiveInt(Number(record?.attempt ?? 1), 1),
+          totalPages: normalizePositiveInt(Number(record?.totalPages ?? 1), 1),
+          pagesProcessed: normalizePositiveInt(Number(record?.pagesProcessed ?? 1), 1),
+          machineReadable: Boolean(record?.machineReadable),
+          sourceAttachmentUrl: normalizeText(record?.sourceAttachmentUrl),
+          sourcePdfHash: normalizeText(record?.sourcePdfHash),
+          updatedAt: normalizeText(record?.updatedAt || record?.classifiedAt || new Date().toISOString()),
+          error: normalizeText(record?.error),
+          promptVersion: normalizeText(record?.promptVersion || aiCriteriaVersion)
+        }))
+        .filter((record) => Boolean(record.dedupAnnouncementKey));
+      aiLabelStore.lastSyncAt =
+        typeof parsed?.lastSyncAt === "string" ? parsed.lastSyncAt : typeof parsed?.updatedAt === "string" ? parsed.updatedAt : null;
+      indexAiLabelStore();
+      log("Loaded AI classification store", { count: aiLabelStore.records.length, path: aiLabelsStoragePath });
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        log("AI classification store not found. Starting fresh.", { path: aiLabelsStoragePath });
+      } else {
+        const message = error instanceof Error ? error.message : "Unknown AI store load error";
+        log("Failed to load AI classification store. Starting fresh.", { message, path: aiLabelsStoragePath });
+      }
+
+      aiLabelStore.records = [];
+      aiLabelStore.lastSyncAt = null;
+      indexAiLabelStore();
+    }
+
+    aiLabelStore.loaded = true;
+  })();
+
+  try {
+    await aiLabelStore.syncInFlight;
+  } finally {
+    aiLabelStore.syncInFlight = null;
+  }
+}
+
+async function persistAiLabelStore() {
+  await mkdir(dirname(aiLabelsStoragePath), { recursive: true });
+  aiLabelStore.lastSyncAt = new Date().toISOString();
+  await writeFile(
+    aiLabelsStoragePath,
+    JSON.stringify(
+      {
+        updatedAt: aiLabelStore.lastSyncAt,
+        criteriaVersion: aiCriteriaVersion,
+        total: aiLabelStore.records.length,
+        records: aiLabelStore.records
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+}
+
+function getAiLabelRecordForKey(dedupAnnouncementKey) {
+  const key = normalizeAnnouncementKey(dedupAnnouncementKey);
+  if (!key) {
+    return null;
+  }
+  return aiLabelStore.byKey.get(key) ?? null;
+}
+
+function upsertAiLabelRecord(record) {
+  const key = normalizeAnnouncementKey(record?.dedupAnnouncementKey);
+  if (!key) {
+    return;
+  }
+
+  const existingIndex = aiLabelStore.records.findIndex(
+    (item) => normalizeAnnouncementKey(item?.dedupAnnouncementKey) === key && normalizeText(item?.criteriaVersion) === aiCriteriaVersion
+  );
+
+  const normalizedRecord = {
+    ...record,
+    dedupAnnouncementKey: key,
+    criteriaVersion: aiCriteriaVersion,
+    updatedAt: new Date().toISOString()
+  };
+
+  if (existingIndex >= 0) {
+    aiLabelStore.records[existingIndex] = normalizedRecord;
+  } else {
+    aiLabelStore.records.push(normalizedRecord);
+  }
+
+  aiLabelStore.byKey.set(key, normalizedRecord);
+  if (normalizedRecord.status === "SUCCESS" && normalizedRecord.inputHash) {
+    aiLabelStore.byInputHash.set(normalizedRecord.inputHash, normalizedRecord);
+  }
+}
+
+async function fetchBinary(url, timeoutMs) {
+  const normalizedUrl = normalizeText(url);
+  if (!normalizedUrl) {
+    throw new Error("Missing URL");
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), normalizePositiveInt(timeoutMs, 30_000));
+
+  try {
+    const response = await fetch(normalizedUrl, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function slicePdfToFirstPages(pdfBuffer, maxPages) {
+  const sourceDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+  const totalPages = sourceDoc.getPageCount();
+  const safeMaxPages = Math.max(1, normalizePositiveInt(maxPages, 4));
+  const pagesToKeep = Math.min(totalPages, safeMaxPages);
+
+  if (pagesToKeep >= totalPages) {
+    return {
+      totalPages,
+      pagesProcessed: totalPages,
+      bytes: pdfBuffer
+    };
+  }
+
+  const targetDoc = await PDFDocument.create();
+  const pageIndexes = Array.from({ length: pagesToKeep }, (_, index) => index);
+  const copiedPages = await targetDoc.copyPages(sourceDoc, pageIndexes);
+  for (const page of copiedPages) {
+    targetDoc.addPage(page);
+  }
+
+  const truncatedBytes = await targetDoc.save();
+  return {
+    totalPages,
+    pagesProcessed: pagesToKeep,
+    bytes: Buffer.from(truncatedBytes)
+  };
+}
+
+async function extractTextFromPdfPages(pdfBuffer, maxPages) {
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(pdfBuffer),
+    useSystemFonts: false,
+    disableFontFace: true,
+    isEvalSupported: false,
+    verbosity: pdfjsLib.VerbosityLevel?.ERRORS ?? 0
+  });
+  const document = await loadingTask.promise;
+  const totalPages = document.numPages;
+  const pagesToProcess = Math.max(1, Math.min(totalPages, normalizePositiveInt(maxPages, 4)));
+  const pageTexts = [];
+
+  for (let pageNumber = 1; pageNumber <= pagesToProcess; pageNumber += 1) {
+    const page = await document.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items
+      .map((item) => normalizeText(item?.str))
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    pageTexts.push(pageText);
+  }
+
+  const combinedText = pageTexts.join("\n\n").trim();
+  return {
+    totalPages,
+    pagesProcessed: pagesToProcess,
+    text: combinedText,
+    textLength: combinedText.length
+  };
+}
+
+function clampConfidence(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+
+  if (numeric < 0) {
+    return 0;
+  }
+
+  if (numeric > 1) {
+    return 1;
+  }
+
+  return numeric;
+}
+
+function extractFirstJsonObject(text) {
+  const raw = normalizeText(text);
+  if (!raw) {
+    return null;
+  }
+
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAiModelOutput(output) {
+  const category = normalizeText(output?.category);
+  const reason = normalizeText(output?.reason);
+  const confidence = clampConfidence(output?.confidence);
+  const needsEscalation = Boolean(output?.needs_escalation) || confidence < clampConfidence(aiEscalationConfidenceThreshold);
+
+  if (!aiClassificationCategories.includes(category)) {
+    throw new Error(`Invalid category '${category || "unknown"}'`);
+  }
+
+  if (!reason) {
+    throw new Error("Missing classification reason");
+  }
+
+  return {
+    category,
+    confidence,
+    reason,
+    needsEscalation
+  };
+}
+
+function buildClassificationUserPrompt(announcement, criteriaVersion, textSnippet) {
+  const symbol = normalizeText(announcement?.symbol) || "-";
+  const company = normalizeText(announcement?.company) || "-";
+  const type = normalizeText(announcement?.type) || "-";
+  const timestamp = normalizeText(announcement?.timestamp) || "-";
+  const isin = normalizeIsin(announcement?.isin) || "-";
+  const sourceExchange = normalizeText(announcement?.exchange) || "DEDUP";
+  const sourceKey = normalizeAnnouncementKey(
+    announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
+  );
+  const excerpt = normalizeText(textSnippet).slice(0, 80_000);
+
+  return [
+    `criteria_version: ${criteriaVersion}`,
+    `source_key: ${sourceKey ?? "-"}`,
+    `exchange: ${sourceExchange}`,
+    `symbol: ${symbol}`,
+    `company: ${company}`,
+    `isin: ${isin}`,
+    `announced_type: ${type}`,
+    `timestamp: ${timestamp}`,
+    "",
+    "Classify this announcement using only the allowed categories.",
+    "Document text excerpt:",
+    excerpt || "(No machine-readable text extracted)"
+  ].join("\n");
+}
+
+async function classifyWithOpenAi(model, prompt, apiKey, baseUrl) {
+  const response = await fetch(`${baseUrl}/responses`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: aiSystemPrompt
+            }
+          ]
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: prompt
+            }
+          ]
+        }
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "announcement_classification",
+          schema: aiJsonSchema,
+          strict: true
+        }
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`);
+  }
+
+  const payload = await response.json();
+  const outputText =
+    normalizeText(payload?.output_text) ||
+    normalizeText(
+      payload?.output?.flatMap((item) => (Array.isArray(item?.content) ? item.content : []))
+        ?.map((contentItem) => contentItem?.text ?? "")
+        ?.join(" ")
+    );
+  const parsed = extractFirstJsonObject(outputText);
+  if (!parsed) {
+    throw new Error("OpenAI response did not return JSON");
+  }
+
+  return normalizeAiModelOutput(parsed);
+}
+
+async function classifyWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
+  const response = await fetch(`${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [
+          {
+            text: aiSystemPrompt
+          }
+        ]
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: prompt
+            },
+            {
+              inlineData: {
+                mimeType: "application/pdf",
+                data: pdfBytes.toString("base64")
+              }
+            }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: "application/json",
+        responseSchema: aiJsonSchema
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Gemini HTTP ${response.status}: ${body.slice(0, 500)}`);
+  }
+
+  const payload = await response.json();
+  const outputText = normalizeText(
+    payload?.candidates?.[0]?.content?.parts
+      ?.map((part) => normalizeText(part?.text))
+      .filter(Boolean)
+      .join(" ")
+  );
+  const parsed = extractFirstJsonObject(outputText);
+  if (!parsed) {
+    throw new Error("Gemini response did not return JSON");
+  }
+
+  return normalizeAiModelOutput(parsed);
+}
+
+async function classifyDedupAnnouncement(announcement) {
+  const dedupAnnouncementKey = normalizeAnnouncementKey(
+    announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
+  );
+  if (!dedupAnnouncementKey) {
+    throw new Error("Missing dedup announcement key");
+  }
+
+  const attachmentUrl = normalizeText(announcement?.attachment_url);
+  if (!attachmentUrl) {
+    throw new Error("Missing attachment URL");
+  }
+
+  const pdfBuffer = await fetchBinary(attachmentUrl, aiPdfFetchTimeoutMs);
+  const stage1Pdf = await slicePdfToFirstPages(pdfBuffer, aiPrimaryMaxPages);
+  const stage1Text = await extractTextFromPdfPages(stage1Pdf.bytes, stage1Pdf.pagesProcessed);
+  const machineReadable = stage1Text.textLength >= normalizePositiveInt(aiMinReadableChars, 700);
+  const criteriaVersion = aiCriteriaVersion;
+  const inputHash = buildAiInputHash(announcement, criteriaVersion);
+
+  const stage1Prompt = buildClassificationUserPrompt(announcement, criteriaVersion, stage1Text.text);
+  let stage1;
+  if (machineReadable && aiOpenAiApiKey) {
+    stage1 = {
+      ...(await classifyWithOpenAi(aiOpenAiStage1Model, stage1Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
+      provider: "openai",
+      model: aiOpenAiStage1Model
+    };
+  } else if (aiGeminiApiKey) {
+    stage1 = {
+      ...(await classifyWithGeminiPdf(aiGeminiStage1Model, stage1Prompt, stage1Pdf.bytes, aiGeminiApiKey, aiGeminiBaseUrl)),
+      provider: "gemini",
+      model: aiGeminiStage1Model
+    };
+  } else if (aiOpenAiApiKey) {
+    stage1 = {
+      ...(await classifyWithOpenAi(aiOpenAiStage1Model, stage1Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
+      provider: "openai",
+      model: aiOpenAiStage1Model
+    };
+  } else {
+    throw new Error("No AI provider key configured");
+  }
+
+  let finalResult = stage1;
+  let pagesProcessed = stage1Pdf.pagesProcessed;
+  const confidenceThreshold = clampConfidence(aiEscalationConfidenceThreshold);
+  const shouldEscalate = stage1.needsEscalation || stage1.confidence < confidenceThreshold;
+
+  if (shouldEscalate) {
+    const stage2Pdf = await slicePdfToFirstPages(pdfBuffer, aiEscalationMaxPages);
+    pagesProcessed = stage2Pdf.pagesProcessed;
+    const stage2Text = machineReadable ? await extractTextFromPdfPages(stage2Pdf.bytes, stage2Pdf.pagesProcessed) : null;
+    const stage2Prompt = buildClassificationUserPrompt(
+      announcement,
+      criteriaVersion,
+      machineReadable ? stage2Text?.text ?? stage1Text.text : stage1Text.text
+    );
+
+    if (machineReadable && aiOpenAiApiKey) {
+      finalResult = {
+        ...(await classifyWithOpenAi(aiOpenAiStage2Model, stage2Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
+        provider: "openai",
+        model: aiOpenAiStage2Model
+      };
+    } else if (aiGeminiApiKey) {
+      finalResult = {
+        ...(await classifyWithGeminiPdf(aiGeminiStage2Model, stage2Prompt, stage2Pdf.bytes, aiGeminiApiKey, aiGeminiBaseUrl)),
+        provider: "gemini",
+        model: aiGeminiStage2Model
+      };
+    }
+  }
+
+  return {
+    dedupAnnouncementKey,
+    inputHash,
+    status: "SUCCESS",
+    label: finalResult.category,
+    confidence: finalResult.confidence,
+    reason: finalResult.reason,
+    provider: finalResult.provider,
+    model: finalResult.model,
+    attempt: shouldEscalate ? 2 : 1,
+    totalPages: stage1Pdf.totalPages,
+    pagesProcessed,
+    machineReadable,
+    sourceAttachmentUrl: attachmentUrl,
+    sourcePdfHash: normalizeText(announcement?.pdf_hash),
+    promptVersion: aiCriteriaVersion,
+    error: ""
+  };
+}
+
+async function runAiClassificationCron(trigger, touchedDedupKeys = []) {
+  await loadAiLabelStore();
+
+  if (!aiClassifierEnabled) {
+    return {
+      trigger,
+      skipped: true,
+      reason: "ai-classifier-disabled",
+      criteriaVersion: aiCriteriaVersion,
+      processedCount: 0,
+      successCount: 0,
+      failureCount: 0
+    };
+  }
+
+  if (!isAiClassificationEnabled()) {
+    return {
+      trigger,
+      skipped: true,
+      reason: "missing-provider-keys",
+      criteriaVersion: aiCriteriaVersion,
+      processedCount: 0,
+      successCount: 0,
+      failureCount: 0
+    };
+  }
+
+  const uniqueKeys = Array.from(
+    new Set((Array.isArray(touchedDedupKeys) ? touchedDedupKeys : []).map((value) => normalizeAnnouncementKey(value)).filter(Boolean))
+  );
+  const dedupByKey = new Map();
+  for (const item of stores.DEDUP.announcements) {
+    const key = normalizeAnnouncementKey(item?.dedupAnnouncementKey ?? item?.mergedAnnouncementKey ?? item?.announcementKey);
+    if (key) {
+      dedupByKey.set(key, item);
+    }
+  }
+
+  let candidates = uniqueKeys
+    .map((key) => dedupByKey.get(key))
+    .filter(Boolean);
+
+  if (candidates.length === 0 && aiLabelStore.records.length === 0) {
+    // Bootstrap mode for first-time setup.
+    candidates = stores.DEDUP.announcements.slice(0, normalizePositiveInt(aiMaxItemsPerCron, 120));
+  }
+
+  const maxItems = normalizePositiveInt(aiMaxItemsPerCron, 120);
+  const queue = [];
+  let skippedExistingCount = 0;
+  const failureRetryWindowMs = normalizePositiveInt(aiFailureRetryHours, 24) * 60 * 60 * 1000;
+
+  for (const item of candidates) {
+    const dedupAnnouncementKey = normalizeAnnouncementKey(
+      item?.dedupAnnouncementKey ?? item?.mergedAnnouncementKey ?? item?.announcementKey
+    );
+    if (!dedupAnnouncementKey) {
+      continue;
+    }
+
+    const inputHash = buildAiInputHash(item, aiCriteriaVersion);
+    const existingRecord = getAiLabelRecordForKey(dedupAnnouncementKey);
+    if (
+      existingRecord &&
+      existingRecord.status === "SUCCESS" &&
+      normalizeText(existingRecord.criteriaVersion) === aiCriteriaVersion &&
+      normalizeText(existingRecord.inputHash) === inputHash
+    ) {
+      skippedExistingCount += 1;
+      continue;
+    }
+
+    if (
+      existingRecord &&
+      existingRecord.status === "FAILED" &&
+      normalizeText(existingRecord.criteriaVersion) === aiCriteriaVersion &&
+      normalizeText(existingRecord.inputHash) === inputHash
+    ) {
+      const failedAtMs = parseTimestampToMillis(existingRecord.updatedAt);
+      if (failedAtMs && Date.now() - failedAtMs < failureRetryWindowMs) {
+        skippedExistingCount += 1;
+        continue;
+      }
+    }
+
+    const hashRecord = aiLabelStore.byInputHash.get(inputHash);
+    if (hashRecord && hashRecord.status === "SUCCESS") {
+      upsertAiLabelRecord({
+        ...hashRecord,
+        dedupAnnouncementKey,
+        inputHash
+      });
+      skippedExistingCount += 1;
+      continue;
+    }
+
+    queue.push(item);
+    if (queue.length >= maxItems) {
+      break;
+    }
+  }
+
+  if (queue.length === 0) {
+    await persistAiLabelStore();
+    return {
+      trigger,
+      skipped: true,
+      reason: "no-new-ai-candidates",
+      criteriaVersion: aiCriteriaVersion,
+      candidateCount: candidates.length,
+      skippedExistingCount,
+      processedCount: 0,
+      successCount: 0,
+      failureCount: 0
+    };
+  }
+
+  const results = await mapWithConcurrency(queue, normalizePositiveInt(aiConcurrency, 2), async (announcement) => {
+    const dedupAnnouncementKey = normalizeAnnouncementKey(
+      announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
+    );
+    const inputHash = buildAiInputHash(announcement, aiCriteriaVersion);
+
+    try {
+      const result = await classifyDedupAnnouncement(announcement);
+      upsertAiLabelRecord(result);
+      return { key: dedupAnnouncementKey, ok: true, provider: result.provider, model: result.model };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown AI classification error";
+      upsertAiLabelRecord({
+        dedupAnnouncementKey,
+        inputHash,
+        status: "FAILED",
+        label: "",
+        confidence: 0,
+        reason: "",
+        provider: "",
+        model: "",
+        attempt: 1,
+        totalPages: 1,
+        pagesProcessed: 1,
+        machineReadable: false,
+        sourceAttachmentUrl: normalizeText(announcement?.attachment_url),
+        sourcePdfHash: normalizeText(announcement?.pdf_hash),
+        promptVersion: aiCriteriaVersion,
+        error: message
+      });
+      return { key: dedupAnnouncementKey, ok: false, error: message };
+    }
+  });
+
+  await persistAiLabelStore();
+
+  const successCount = results.filter((result) => result.ok).length;
+  const failureCount = results.length - successCount;
+
+  return {
+    trigger,
+    criteriaVersion: aiCriteriaVersion,
+    candidateCount: candidates.length,
+    queuedCount: queue.length,
+    skippedExistingCount,
+    processedCount: results.length,
+    successCount,
+    failureCount,
+    failedKeys: results.filter((result) => !result.ok).map((result) => result.key).filter(Boolean)
+  };
+}
+
+function enrichDedupAnnouncementWithAi(announcement) {
+  const key = normalizeAnnouncementKey(
+    announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
+  );
+  if (!key) {
+    return announcement;
+  }
+
+  const aiRecord = getAiLabelRecordForKey(key);
+  if (!aiRecord) {
+    return {
+      ...announcement,
+      ai_label: null,
+      ai_confidence: null,
+      ai_reason: null,
+      ai_status: "MISSING"
+    };
+  }
+
+  return {
+    ...announcement,
+    ai_label: aiRecord.status === "SUCCESS" ? aiRecord.label || null : null,
+    ai_confidence: aiRecord.status === "SUCCESS" ? clampConfidence(aiRecord.confidence) : null,
+    ai_reason: aiRecord.status === "SUCCESS" ? aiRecord.reason || null : null,
+    ai_status: aiRecord.status,
+    ai_provider: aiRecord.provider || null,
+    ai_model: aiRecord.model || null
+  };
+}
+
 async function fetchPdfHashFromUrl(url) {
   const normalizedUrl = normalizeText(url);
   if (!normalizedUrl) {
@@ -890,9 +1805,11 @@ async function buildDedupAnnouncements(options = {}) {
   });
 
   let sourceDedupedCount = 0;
+  const touchedDedupKeys = new Set();
 
   for (const item of normalizedSourceItems) {
     const dedupeKey = item.isin && item.pdfHash ? `ISIN:${item.isin}|PDF:${item.pdfHash}` : `SOURCE:${item.sourceKey}`;
+    touchedDedupKeys.add(dedupeKey);
     const existing = dedupMap.get(dedupeKey);
 
     if (!existing) {
@@ -967,12 +1884,14 @@ async function buildDedupAnnouncements(options = {}) {
 
   return {
     announcements: dedupAnnouncements,
+    touchedDedupKeys: Array.from(touchedDedupKeys),
     stats: {
       inputCount: sourceItems.length,
       baselineCount: baseAnnouncements.length,
       dedupCount: sourceDedupedCount,
       mergedRecordCount,
       dedupedCount: dedupAnnouncements.length,
+      touchedCount: touchedDedupKeys.size,
       withIsinCount,
       missingIsinCount,
       withPdfHashCount,
@@ -1097,6 +2016,7 @@ async function refreshDedupAnnouncements(trigger = "manual", force = false) {
           ...store.lastSyncStats,
           trigger,
           skipped: true,
+          touchedDedupKeys: [],
           sourceCombinedSyncAt: sourceCombinedSyncAt ?? dedupSourceSyncAt ?? null,
           totalStored: store.announcements.length,
           syncedAt: store.lastSyncAt
@@ -1108,6 +2028,7 @@ async function refreshDedupAnnouncements(trigger = "manual", force = false) {
         trigger,
         dedupeRule: "ISIN + PDF hash",
         skipped: true,
+        touchedDedupKeys: [],
         sourceCombinedSyncAt: sourceCombinedSyncAt ?? dedupSourceSyncAt ?? null,
         totalStored: store.announcements.length,
         syncedAt: store.lastSyncAt
@@ -1139,6 +2060,7 @@ async function refreshDedupAnnouncements(trigger = "manual", force = false) {
       candidateSourceCount: sourceCandidates.length,
       inputCount: result.stats.inputCount,
       baselineCount: result.stats.baselineCount,
+      touchedCount: result.stats.touchedCount,
       dedupCount: result.stats.dedupCount,
       mergedRecordCount: result.stats.mergedRecordCount,
       dedupedCount: result.stats.dedupedCount,
@@ -1157,7 +2079,10 @@ async function refreshDedupAnnouncements(trigger = "manual", force = false) {
     store.loaded = true;
 
     await persistStore("DEDUP");
-    return store.lastSyncStats;
+    return {
+      ...store.lastSyncStats,
+      touchedDedupKeys: Array.isArray(result.touchedDedupKeys) ? result.touchedDedupKeys : []
+    };
   })();
 
   try {
@@ -1581,7 +2506,7 @@ function matchSymbolFilter(item, exchange, symbolFilter) {
 }
 
 async function handleGetAnnouncements(req, res, requestUrl) {
-  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP")]);
+  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore()]);
 
   const requestedLimit = Number.parseInt(requestUrl.searchParams.get("limit") ?? "100", 10);
   const limit = Math.min(Math.max(normalizePositiveInt(requestedLimit, 100), 1), 500);
@@ -1645,9 +2570,13 @@ async function handleGetAnnouncements(req, res, requestUrl) {
           ? stores.DEDUP.lastSyncStats
         : stores[selectedExchange].lastSyncStats;
 
+  const slicedAnnouncements = filtered.slice(offset, offset + limit);
+  const announcements =
+    selectedExchange === "DEDUP" ? slicedAnnouncements.map((item) => enrichDedupAnnouncementWithAi(item)) : slicedAnnouncements;
+
   sendJson(req, res, 200, {
     exchange: selectedExchange,
-    announcements: filtered.slice(offset, offset + limit),
+    announcements,
     total: filtered.length,
     limit,
     offset,
@@ -1730,12 +2659,30 @@ async function handleCronRun(req, res) {
         }
       };
 
+  const aiClassificationResult =
+    dedupResult.status === "fulfilled"
+      ? await runAiClassificationCron(trigger, dedupResult.value?.touchedDedupKeys)
+          .then((value) => ({ status: "fulfilled", value }))
+          .catch((reason) => ({ status: "rejected", reason }))
+      : {
+          status: "fulfilled",
+          value: {
+            trigger,
+            skipped: true,
+            reason: "dedup-sync-failed",
+            processedCount: 0,
+            successCount: 0,
+            failureCount: 0
+          }
+        };
+
   const responsePayload = {
     ok:
       nseResult.status === "fulfilled" &&
       bseResult.status === "fulfilled" &&
       combinedResult.status === "fulfilled" &&
-      dedupResult.status === "fulfilled",
+      dedupResult.status === "fulfilled" &&
+      aiClassificationResult.status === "fulfilled",
     runCount: cronRunCount,
     lastCronRunAt,
     nseSync:
@@ -1753,7 +2700,16 @@ async function handleCronRun(req, res) {
     dedupSync:
       dedupResult.status === "fulfilled"
         ? dedupResult.value
-        : { error: dedupResult.reason instanceof Error ? dedupResult.reason.message : "Unknown dedup sync error" }
+        : { error: dedupResult.reason instanceof Error ? dedupResult.reason.message : "Unknown dedup sync error" },
+    aiClassification:
+      aiClassificationResult.status === "fulfilled"
+        ? aiClassificationResult.value
+        : {
+            error:
+              aiClassificationResult.reason instanceof Error
+                ? aiClassificationResult.reason.message
+                : "Unknown AI classification error"
+          }
   };
 
   if (responsePayload.ok) {
@@ -1785,7 +2741,14 @@ async function handleWorkerHeartbeat(req, res) {
 }
 
 async function handleStatus(req, res) {
-  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP")]);
+  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore()]);
+
+  const aiSuccessCount = aiLabelStore.records.filter(
+    (record) => normalizeText(record?.criteriaVersion) === aiCriteriaVersion && normalizeText(record?.status) === "SUCCESS"
+  ).length;
+  const aiFailureCount = aiLabelStore.records.filter(
+    (record) => normalizeText(record?.criteriaVersion) === aiCriteriaVersion && normalizeText(record?.status) === "FAILED"
+  ).length;
 
   sendJson(req, res, 200, {
     service: appName,
@@ -1807,7 +2770,13 @@ async function handleStatus(req, res) {
     lastCombinedSyncAt: stores.COMBINED.lastSyncAt,
     lastCombinedSyncStats: stores.COMBINED.lastSyncStats,
     lastDedupSyncAt: stores.DEDUP.lastSyncAt,
-    lastDedupSyncStats: stores.DEDUP.lastSyncStats
+    lastDedupSyncStats: stores.DEDUP.lastSyncStats,
+    aiCriteriaVersion,
+    aiClassifierEnabled,
+    aiLabelsCount: aiLabelStore.records.length,
+    aiLabelsSuccessCount: aiSuccessCount,
+    aiLabelsFailureCount: aiFailureCount,
+    aiLabelsLastSyncAt: aiLabelStore.lastSyncAt
   });
 }
 
@@ -1881,7 +2850,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP")])
+Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore()])
   .catch((error) => {
     const message = error instanceof Error ? error.message : "Unknown error";
     log("Announcement stores warm-up failed", { message });

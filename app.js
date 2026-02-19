@@ -1034,12 +1034,12 @@ function renderNotifications() {
   }
 
   if (state.notifications.loading) {
-    refs.notificationsTable.innerHTML = '<tr><td colspan="6"><div class="empty-state">Loading announcements...</div></td></tr>';
+    refs.notificationsTable.innerHTML = '<tr><td colspan="7"><div class="empty-state">Loading announcements...</div></td></tr>';
     return;
   }
 
   if (state.notifications.error) {
-    refs.notificationsTable.innerHTML = `<tr><td colspan="6"><div class="empty-state">Failed to load announcements: ${escapeHtml(
+    refs.notificationsTable.innerHTML = `<tr><td colspan="7"><div class="empty-state">Failed to load announcements: ${escapeHtml(
       state.notifications.error
     )}</div></td></tr>`;
     return;
@@ -1047,7 +1047,7 @@ function renderNotifications() {
 
   if (state.notifications.items.length === 0) {
     refs.notificationsTable.innerHTML =
-      '<tr><td colspan="6"><div class="empty-state">No announcements found for the selected filter.</div></td></tr>';
+      '<tr><td colspan="7"><div class="empty-state">No announcements found for the selected filter.</div></td></tr>';
     return;
   }
 
@@ -1069,6 +1069,7 @@ function renderNotifications() {
       let company = "-";
       let type = "-";
       let attachmentUrl = null;
+      let aiLabel = "-";
 
       if (combinedView) {
         const sourceExchanges = Array.isArray(item.exchanges)
@@ -1100,6 +1101,18 @@ function renderNotifications() {
         company = item.company || "-";
         type = item.type || "-";
         attachmentUrl = item.attachment_url || null;
+        const normalizedExchange = String(state.notifications.exchange || "").toUpperCase();
+        const aiStatus = String(item.ai_status || "").toUpperCase();
+        if (normalizedExchange === "DEDUP") {
+          if (aiStatus === "SUCCESS" && item.ai_label) {
+            const confidence = Number(item.ai_confidence);
+            aiLabel = Number.isFinite(confidence) ? `${item.ai_label} (${Math.round(confidence * 100)}%)` : String(item.ai_label);
+          } else if (aiStatus === "FAILED") {
+            aiLabel = "Failed";
+          } else if (aiStatus === "MISSING") {
+            aiLabel = "Pending";
+          }
+        }
 
         const mergedCount = Number.parseInt(String(item.mergedFromCount ?? "0"), 10);
         if (Number.isFinite(mergedCount) && mergedCount > 1) {
@@ -1133,6 +1146,7 @@ function renderNotifications() {
           <td>${escapeHtml(symbol)}</td>
           <td>${escapeHtml(company)}</td>
           <td>${escapeHtml(type)}</td>
+          <td>${escapeHtml(aiLabel)}</td>
           <td>${attachment}</td>
         </tr>
       `;

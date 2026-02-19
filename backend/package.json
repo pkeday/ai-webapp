@@ -10,6 +10,10 @@
     "cron": "node src/cron.js",
     "check": "node --check src/server.js && node --check src/worker.js && node --check src/cron.js && node --check src/nseAnnouncements.js && node --check src/bseAnnouncements.js"
   },
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.4.394"
+  },
   "engines": {
     "node": ">=20"
   }
