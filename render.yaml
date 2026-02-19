@@ -19,3 +19,30 @@ services:
         value: https://pkeday.github.io
       - key: CRON_SECRET
         generateValue: true
+
+  - type: web
+    name: pkeday-ai-webapp-brokerage-api
+    runtime: node
+    rootDir: backend-brokerage
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: APP_NAME
+        value: ai-webapp-brokerage-api
+      - key: APP_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: https://pkeday.github.io
+      - key: FRONTEND_URL
+        value: https://pkeday.github.io/ai-webapp/
+      - key: PUBLIC_API_BASE_URL
+        value: https://pkeday-ai-webapp-brokerage-api.onrender.com
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true

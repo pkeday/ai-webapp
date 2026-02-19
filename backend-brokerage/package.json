@@ -1,0 +1,14 @@
+{
+  "name": "ai-webapp-brokerage-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sub-app 1 brokerage backend (auth + gmail ingest/archive)",
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
