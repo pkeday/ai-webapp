@@ -8,42 +8,79 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="app-header">
-        <div class="header-row">
-          <div class="brand">
+      <div class="app-layout">
+        <aside class="app-sidebar">
+          <div class="sidebar-brand">
             <h1>AI Web App</h1>
-            <p>Sub-app 1: Brokerage Emails | Sub-app 2: Notifications</p>
+            <p>Brokerage + Notifications</p>
           </div>
-          <div class="header-actions">
-            <button id="google-connect-btn" class="btn">Sign in with Google</button>
-            <button id="signout-btn" class="btn">Sign out</button>
-            <button id="run-ingest-btn" class="btn">Run ingest now</button>
-            <button id="send-digest-btn" class="btn primary">Send digest preview</button>
-          </div>
-        </div>
 
-        <div class="status-strip">
-          <span id="backend-status">Backend status: checking...</span>
-          <span id="auth-status">Auth status: not signed in</span>
-          <span id="pipeline-status">Pipeline status: using frontend mock data</span>
-        </div>
+          <nav class="section-tabs" aria-label="App Sections">
+            <button class="section-tab active" data-section="brokerage">
+              <span class="section-tab-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img" focusable="false">
+                  <path
+                    d="M4 5h16M4 12h16M4 19h10M16 17l2 2 4-4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              <span class="section-tab-text">Brokerage Email</span>
+            </button>
+            <button class="section-tab" data-section="notifications">
+              <span class="section-tab-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img" focusable="false">
+                  <path
+                    d="M7 8a5 5 0 1110 0v4l2 3H5l2-3V8zM10 18a2 2 0 004 0"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              <span class="section-tab-text">Notifications</span>
+            </button>
+          </nav>
+        </aside>
 
-        <nav class="section-tabs" aria-label="App Sections">
-          <button class="section-tab active" data-section="brokerage">Brokerage Email</button>
-          <button class="section-tab" data-section="notifications">Notifications</button>
-        </nav>
+        <div class="app-main-shell">
+          <header class="app-header">
+            <div class="header-row">
+              <div class="brand">
+                <h2>Workspace</h2>
+                <p>Brokerage intelligence and exchange announcements</p>
+              </div>
+              <div class="header-actions">
+                <button id="google-connect-btn" class="btn">Sign in with Google</button>
+                <button id="signout-btn" class="btn">Sign out</button>
+                <button id="run-ingest-btn" class="btn">Run ingest now</button>
+                <button id="send-digest-btn" class="btn primary">Send digest preview</button>
+              </div>
+            </div>
 
-        <nav id="brokerage-view-tabs" class="view-tabs" aria-label="Brokerage Email Views">
-          <button class="tab active" data-view="dashboard">Dashboard</button>
-          <button class="tab" data-view="archive">Archive</button>
-          <button class="tab" data-view="company">Company View</button>
-          <button class="tab" data-view="settings">Settings</button>
-          <button class="tab" data-view="digest">Digest Preview</button>
-        </nav>
-      </header>
+            <div class="status-strip">
+              <span id="backend-status">Backend status: checking...</span>
+              <span id="auth-status">Auth status: not signed in</span>
+              <span id="pipeline-status">Pipeline status: using frontend mock data</span>
+            </div>
 
-      <main class="app-main">
-        <section id="view-dashboard" class="view active">
+            <nav id="brokerage-view-tabs" class="view-tabs" aria-label="Brokerage Email Views">
+              <button class="tab active" data-view="dashboard">Dashboard</button>
+              <button class="tab" data-view="archive">Archive</button>
+              <button class="tab" data-view="company">Company View</button>
+              <button class="tab" data-view="settings">Settings</button>
+              <button class="tab" data-view="digest">Digest Preview</button>
+            </nav>
+          </header>
+
+          <main class="app-main">
+            <section id="view-dashboard" class="view active">
           <div class="filters">
             <label>
               Broker
@@ -74,9 +111,9 @@
           <div class="kpi-grid" id="kpi-grid"></div>
 
           <div class="broker-lanes" id="broker-lanes"></div>
-        </section>
+            </section>
 
-        <section id="view-archive" class="view">
+            <section id="view-archive" class="view">
           <article class="panel">
             <header>Archived Source Emails</header>
             <div class="panel-body">
@@ -113,9 +150,9 @@
               </div>
             </div>
           </article>
-        </section>
+            </section>
 
-        <section id="view-company" class="view">
+            <section id="view-company" class="view">
           <div class="company-topbar">
             <label>
               Company
@@ -140,9 +177,9 @@
               <div class="panel-body" id="company-workbench"></div>
             </aside>
           </div>
-        </section>
+            </section>
 
-        <section id="view-notifications" class="view">
+            <section id="view-notifications" class="view">
           <article class="panel">
             <header>Exchange Announcements</header>
             <div class="panel-body">
@@ -235,9 +272,9 @@
               </div>
             </div>
           </article>
-        </section>
+            </section>
 
-        <section id="view-settings" class="view">
+            <section id="view-settings" class="view">
           <div class="split-layout">
             <article class="panel">
               <header>Company Normalization Dictionary</header>
@@ -309,17 +346,19 @@
               </div>
             </aside>
           </div>
-        </section>
+            </section>
 
-        <section id="view-digest" class="view">
+            <section id="view-digest" class="view">
           <article class="panel">
             <header>Daily Digest Preview</header>
             <div class="panel-body" id="digest-preview"></div>
           </article>
-        </section>
-      </main>
+            </section>
+          </main>
+        </div>
+      </div>
     </div>
 
-    <script src="./app.js?v=20260219-1835" type="module"></script>
+    <script src="./app.js?v=20260219-2210" type="module"></script>
   </body>
 </html>
