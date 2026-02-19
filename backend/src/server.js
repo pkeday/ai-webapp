@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import pg from "pg";
 import { PDFDocument } from "pdf-lib";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import { fetchNseAnnouncements, deriveAnnouncementKey, getDefaultDateRange } from "./nseAnnouncements.js";
@@ -71,6 +72,17 @@ const aiAnthropicApiKey = normalizeApiKeySecret(process.env.CLAUDE_API_KEY ?? pr
 const aiAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL?.trim().replace(/\/$/, "") || "https://api.anthropic.com/v1";
 const aiAnthropicStage1Model = process.env.AI_ANTHROPIC_STAGE1_MODEL ?? "claude-3-5-haiku-latest";
 const aiAnthropicStage2Model = process.env.AI_ANTHROPIC_STAGE2_MODEL ?? "claude-3-5-sonnet-latest";
+const databaseUrl = normalizeText(process.env.DATABASE_URL ?? "");
+const databaseSslMode = normalizeText(
+  process.env.DATABASE_SSL_MODE ?? (appEnv === "production" ? "require" : "disable")
+).toLowerCase();
+const databaseMaxConnections = Number.parseInt(process.env.DATABASE_MAX_CONNECTIONS ?? "10", 10);
+const databaseConnectionTimeoutMs = Number.parseInt(process.env.DATABASE_CONNECTION_TIMEOUT_MS ?? "10000", 10);
+const databaseIdleTimeoutMs = Number.parseInt(process.env.DATABASE_IDLE_TIMEOUT_MS ?? "30000", 10);
+
+const databaseSnapshotTable = "announcement_snapshots";
+const databaseStoreSnapshotPrefix = "store:";
+const databaseAiLabelSnapshotKey = "ai-labels";
 
 const notes = [];
 let noteId = 1;
@@ -266,6 +278,11 @@ const aiLabelStore = {
   lastSyncAt: null
 };
 
+const { Pool } = pg;
+let databasePool = null;
+let databaseInitInFlight = null;
+let databaseReady = false;
+
 function getAllowedOrigin(originHeader) {
   if (corsOrigins.length === 0) {
     return "*";
@@ -357,6 +374,143 @@ function sanitizeSensitiveText(value) {
     .replace(/sk-ant-[A-Za-z0-9_\-]{10,}/g, "[REDACTED_ANTHROPIC_KEY]")
     .replace(/AIza[A-Za-z0-9_\-]{10,}/g, "[REDACTED_GEMINI_KEY]")
     .replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, "Bearer [REDACTED_TOKEN]");
+}
+
+function isDatabaseEnabled() {
+  return Boolean(databaseUrl);
+}
+
+function getDatabaseSslConfig() {
+  if (databaseSslMode === "disable" || databaseSslMode === "off" || databaseSslMode === "false") {
+    return false;
+  }
+
+  return {
+    rejectUnauthorized: false
+  };
+}
+
+function getDatabasePool() {
+  if (!isDatabaseEnabled()) {
+    return null;
+  }
+
+  if (databasePool) {
+    return databasePool;
+  }
+
+  databasePool = new Pool({
+    connectionString: databaseUrl,
+    ssl: getDatabaseSslConfig(),
+    max: Math.max(1, normalizePositiveInt(databaseMaxConnections, 10)),
+    connectionTimeoutMillis: Math.max(1000, normalizePositiveInt(databaseConnectionTimeoutMs, 10_000)),
+    idleTimeoutMillis: Math.max(1000, normalizePositiveInt(databaseIdleTimeoutMs, 30_000))
+  });
+
+  databasePool.on("error", (error) => {
+    const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB pool error"));
+    log("Postgres pool error", { message });
+  });
+
+  return databasePool;
+}
+
+function getStoreSnapshotKey(exchange) {
+  return `${databaseStoreSnapshotPrefix}${String(exchange || "").toUpperCase()}`;
+}
+
+async function ensureDatabaseReady() {
+  if (!isDatabaseEnabled()) {
+    return false;
+  }
+
+  if (databaseReady) {
+    return true;
+  }
+
+  if (databaseInitInFlight) {
+    return databaseInitInFlight;
+  }
+
+  databaseInitInFlight = (async () => {
+    const pool = getDatabasePool();
+    if (!pool) {
+      return false;
+    }
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${databaseSnapshotTable} (
+        snapshot_key TEXT PRIMARY KEY,
+        payload JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    databaseReady = true;
+    log("Postgres snapshot storage ready", { table: databaseSnapshotTable });
+    return true;
+  })()
+    .catch((error) => {
+      databaseReady = false;
+      throw error;
+    })
+    .finally(() => {
+      databaseInitInFlight = null;
+    });
+
+  return databaseInitInFlight;
+}
+
+async function readSnapshotFromDatabase(snapshotKey) {
+  if (!isDatabaseEnabled()) {
+    return null;
+  }
+
+  await ensureDatabaseReady();
+  const pool = getDatabasePool();
+  if (!pool) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT payload
+      FROM ${databaseSnapshotTable}
+      WHERE snapshot_key = $1
+      LIMIT 1
+    `,
+    [snapshotKey]
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return result.rows[0]?.payload ?? null;
+}
+
+async function writeSnapshotToDatabase(snapshotKey, payload) {
+  if (!isDatabaseEnabled()) {
+    return false;
+  }
+
+  await ensureDatabaseReady();
+  const pool = getDatabasePool();
+  if (!pool) {
+    return false;
+  }
+
+  await pool.query(
+    `
+      INSERT INTO ${databaseSnapshotTable} (snapshot_key, payload, updated_at)
+      VALUES ($1, $2::jsonb, NOW())
+      ON CONFLICT (snapshot_key)
+      DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
+    `,
+    [snapshotKey, JSON.stringify(payload)]
+  );
+
+  return true;
 }
 
 function sleep(ms) {
@@ -905,58 +1059,101 @@ async function loadAiLabelStore() {
   }
 
   aiLabelStore.syncInFlight = (async () => {
-    try {
-      const text = await readFile(aiLabelsStoragePath, "utf8");
-      const parsed = JSON.parse(text);
-      const records = Array.isArray(parsed?.records) ? parsed.records : Array.isArray(parsed) ? parsed : [];
-      aiLabelStore.records = records
-        .map((record) => {
-          const failureType = normalizeAiFailureType(record?.failureType ?? record?.failure_type);
-          const retryable =
-            record?.retryable === undefined || record?.retryable === null
-              ? isTransientAiFailureType(failureType)
-              : Boolean(record?.retryable);
+    let parsed = null;
+    let source = "";
 
-          return {
-            dedupAnnouncementKey: normalizeAnnouncementKey(record?.dedupAnnouncementKey),
-            criteriaVersion: normalizeText(record?.criteriaVersion),
-            inputHash: normalizeText(record?.inputHash),
-            status: normalizeText(record?.status).toUpperCase() || "UNKNOWN",
-            label: normalizeText(record?.label),
-            confidence: Number(record?.confidence ?? 0),
-            reason: normalizeText(record?.reason),
-            provider: normalizeText(record?.provider),
-            model: normalizeText(record?.model),
-            attempt: normalizePositiveInt(Number(record?.attempt ?? 1), 1),
-            totalPages: normalizePositiveInt(Number(record?.totalPages ?? 1), 1),
-            pagesProcessed: normalizePositiveInt(Number(record?.pagesProcessed ?? 1), 1),
-            machineReadable: Boolean(record?.machineReadable),
-            sourceAttachmentUrl: normalizeText(record?.sourceAttachmentUrl),
-            sourcePdfHash: normalizeText(record?.sourcePdfHash),
-            updatedAt: normalizeText(record?.updatedAt || record?.classifiedAt || new Date().toISOString()),
-            error: normalizeText(record?.error),
-            failureType,
-            retryable,
-            promptVersion: normalizeText(record?.promptVersion || aiCriteriaVersion)
-          };
-        })
-        .filter((record) => Boolean(record.dedupAnnouncementKey));
-      aiLabelStore.lastSyncAt =
-        typeof parsed?.lastSyncAt === "string" ? parsed.lastSyncAt : typeof parsed?.updatedAt === "string" ? parsed.updatedAt : null;
-      indexAiLabelStore();
-      log("Loaded AI classification store", { count: aiLabelStore.records.length, path: aiLabelsStoragePath });
-    } catch (error) {
-      if (error?.code === "ENOENT") {
-        log("AI classification store not found. Starting fresh.", { path: aiLabelsStoragePath });
-      } else {
-        const message = error instanceof Error ? error.message : "Unknown AI store load error";
-        log("Failed to load AI classification store. Starting fresh.", { message, path: aiLabelsStoragePath });
+    if (isDatabaseEnabled()) {
+      try {
+        parsed = await readSnapshotFromDatabase(databaseAiLabelSnapshotKey);
+        if (parsed) {
+          source = "postgres";
+        }
+      } catch (error) {
+        const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB load error"));
+        log("Failed to load AI classification store from Postgres. Falling back to file.", { message });
       }
+    }
 
+    if (!parsed) {
+      try {
+        const text = await readFile(aiLabelsStoragePath, "utf8");
+        parsed = JSON.parse(text);
+        source = "file";
+      } catch (error) {
+        if (error?.code === "ENOENT") {
+          log("AI classification store not found. Starting fresh.", { path: aiLabelsStoragePath });
+        } else {
+          const message = error instanceof Error ? error.message : "Unknown AI store load error";
+          log("Failed to load AI classification store. Starting fresh.", { message, path: aiLabelsStoragePath });
+        }
+      }
+    }
+
+    if (!parsed) {
       aiLabelStore.records = [];
       aiLabelStore.lastSyncAt = null;
       indexAiLabelStore();
+      aiLabelStore.loaded = true;
+      return;
     }
+
+    const records = Array.isArray(parsed?.records) ? parsed.records : Array.isArray(parsed) ? parsed : [];
+    aiLabelStore.records = records
+      .map((record) => {
+        const failureType = normalizeAiFailureType(record?.failureType ?? record?.failure_type);
+        const retryable =
+          record?.retryable === undefined || record?.retryable === null
+            ? isTransientAiFailureType(failureType)
+            : Boolean(record?.retryable);
+
+        return {
+          dedupAnnouncementKey: normalizeAnnouncementKey(record?.dedupAnnouncementKey),
+          criteriaVersion: normalizeText(record?.criteriaVersion),
+          inputHash: normalizeText(record?.inputHash),
+          status: normalizeText(record?.status).toUpperCase() || "UNKNOWN",
+          label: normalizeText(record?.label),
+          confidence: Number(record?.confidence ?? 0),
+          reason: normalizeText(record?.reason),
+          provider: normalizeText(record?.provider),
+          model: normalizeText(record?.model),
+          attempt: normalizePositiveInt(Number(record?.attempt ?? 1), 1),
+          totalPages: normalizePositiveInt(Number(record?.totalPages ?? 1), 1),
+          pagesProcessed: normalizePositiveInt(Number(record?.pagesProcessed ?? 1), 1),
+          machineReadable: Boolean(record?.machineReadable),
+          sourceAttachmentUrl: normalizeText(record?.sourceAttachmentUrl),
+          sourcePdfHash: normalizeText(record?.sourcePdfHash),
+          updatedAt: normalizeText(record?.updatedAt || record?.classifiedAt || new Date().toISOString()),
+          error: normalizeText(record?.error),
+          failureType,
+          retryable,
+          promptVersion: normalizeText(record?.promptVersion || aiCriteriaVersion)
+        };
+      })
+      .filter((record) => Boolean(record.dedupAnnouncementKey));
+    aiLabelStore.lastSyncAt =
+      typeof parsed?.lastSyncAt === "string" ? parsed.lastSyncAt : typeof parsed?.updatedAt === "string" ? parsed.updatedAt : null;
+    indexAiLabelStore();
+
+    if (source === "file" && isDatabaseEnabled()) {
+      try {
+        await writeSnapshotToDatabase(databaseAiLabelSnapshotKey, {
+          updatedAt: aiLabelStore.lastSyncAt || new Date().toISOString(),
+          criteriaVersion: aiCriteriaVersion,
+          total: aiLabelStore.records.length,
+          records: aiLabelStore.records
+        });
+        source = "file->postgres";
+      } catch (error) {
+        const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
+        log("Failed to backfill AI classification store into Postgres", { message });
+      }
+    }
+
+    log("Loaded AI classification store", {
+      count: aiLabelStore.records.length,
+      path: aiLabelsStoragePath,
+      source
+    });
 
     aiLabelStore.loaded = true;
   })();
@@ -969,22 +1166,25 @@ async function loadAiLabelStore() {
 }
 
 async function persistAiLabelStore() {
-  await mkdir(dirname(aiLabelsStoragePath), { recursive: true });
   aiLabelStore.lastSyncAt = new Date().toISOString();
-  await writeFile(
-    aiLabelsStoragePath,
-    JSON.stringify(
-      {
-        updatedAt: aiLabelStore.lastSyncAt,
-        criteriaVersion: aiCriteriaVersion,
-        total: aiLabelStore.records.length,
-        records: aiLabelStore.records
-      },
-      null,
-      2
-    ),
-    "utf8"
-  );
+  const payload = {
+    updatedAt: aiLabelStore.lastSyncAt,
+    criteriaVersion: aiCriteriaVersion,
+    total: aiLabelStore.records.length,
+    records: aiLabelStore.records
+  };
+
+  if (isDatabaseEnabled()) {
+    try {
+      await writeSnapshotToDatabase(databaseAiLabelSnapshotKey, payload);
+    } catch (error) {
+      const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
+      log("Failed to persist AI classification store to Postgres", { message });
+    }
+  }
+
+  await mkdir(dirname(aiLabelsStoragePath), { recursive: true });
+  await writeFile(aiLabelsStoragePath, JSON.stringify(payload, null, 2), "utf8");
 }
 
 function getAiLabelRecordForKey(dedupAnnouncementKey) {
@@ -2705,79 +2905,7 @@ async function refreshDedupAnnouncements(trigger = "manual", force = false) {
   }
 }
 
-async function loadStore(exchange) {
-  const store = stores[exchange];
-  if (store.loaded) {
-    return;
-  }
-
-  try {
-    const text = await readFile(store.storagePath, "utf8");
-    const parsed = JSON.parse(text);
-    const savedAnnouncements = Array.isArray(parsed)
-      ? parsed
-      : Array.isArray(parsed?.announcements)
-        ? parsed.announcements
-        : [];
-
-    store.announcements = dedupeAnnouncements(exchange, savedAnnouncements);
-    store.keys.clear();
-    for (const item of store.announcements) {
-      store.keys.add(item.announcementKey);
-    }
-
-    if (typeof parsed?.lastSyncAt === "string") {
-      store.lastSyncAt = parsed.lastSyncAt;
-    } else if (exchange === "NSE" && typeof parsed?.lastNseSyncAt === "string") {
-      store.lastSyncAt = parsed.lastNseSyncAt;
-    } else if (exchange === "BSE" && typeof parsed?.lastBseSyncAt === "string") {
-      store.lastSyncAt = parsed.lastBseSyncAt;
-    } else if (exchange === "COMBINED" && typeof parsed?.lastCombinedSyncAt === "string") {
-      store.lastSyncAt = parsed.lastCombinedSyncAt;
-    } else if (exchange === "DEDUP" && typeof parsed?.lastDedupSyncAt === "string") {
-      store.lastSyncAt = parsed.lastDedupSyncAt;
-    }
-
-    if (parsed?.lastSyncStats && typeof parsed.lastSyncStats === "object") {
-      store.lastSyncStats = parsed.lastSyncStats;
-    } else if (exchange === "NSE" && parsed?.lastNseSyncStats && typeof parsed.lastNseSyncStats === "object") {
-      store.lastSyncStats = parsed.lastNseSyncStats;
-    } else if (exchange === "BSE" && parsed?.lastBseSyncStats && typeof parsed.lastBseSyncStats === "object") {
-      store.lastSyncStats = parsed.lastBseSyncStats;
-    } else if (exchange === "COMBINED" && parsed?.lastCombinedSyncStats && typeof parsed.lastCombinedSyncStats === "object") {
-      store.lastSyncStats = parsed.lastCombinedSyncStats;
-    } else if (exchange === "DEDUP" && parsed?.lastDedupSyncStats && typeof parsed.lastDedupSyncStats === "object") {
-      store.lastSyncStats = parsed.lastDedupSyncStats;
-    }
-
-    if (typeof parsed?.sourceFingerprint === "string") {
-      store.sourceFingerprint = parsed.sourceFingerprint;
-    }
-
-    log(`Loaded ${exchange} announcement store`, {
-      count: store.announcements.length,
-      path: store.storagePath
-    });
-  } catch (error) {
-    const code = error?.code;
-    if (code === "ENOENT") {
-      log(`${exchange} announcement store not found. Starting fresh.`, { path: store.storagePath });
-    } else {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      log(`Failed to load ${exchange} announcement store. Starting fresh.`, { message, path: store.storagePath });
-    }
-
-    store.announcements = [];
-    store.keys.clear();
-    store.lastSyncAt = null;
-    store.lastSyncStats = null;
-  }
-
-  store.loaded = true;
-}
-
-async function persistStore(exchange) {
-  const store = stores[exchange];
+function buildStoreSnapshotPayload(exchange, store) {
   const legacySyncFields =
     exchange === "NSE"
       ? {
@@ -2801,25 +2929,146 @@ async function persistStore(exchange) {
               }
           : {};
 
+  return {
+    updatedAt: new Date().toISOString(),
+    exchange,
+    sourceFingerprint: typeof store.sourceFingerprint === "string" ? store.sourceFingerprint : null,
+    lastSyncAt: store.lastSyncAt,
+    lastSyncStats: store.lastSyncStats,
+    total: store.announcements.length,
+    announcements: store.announcements,
+    ...legacySyncFields
+  };
+}
+
+function applyStoreSnapshot(exchange, store, parsed) {
+  const savedAnnouncements = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed?.announcements)
+      ? parsed.announcements
+      : [];
+
+  store.announcements = dedupeAnnouncements(exchange, savedAnnouncements);
+  store.keys.clear();
+  for (const item of store.announcements) {
+    store.keys.add(item.announcementKey);
+  }
+
+  if (typeof parsed?.lastSyncAt === "string") {
+    store.lastSyncAt = parsed.lastSyncAt;
+  } else if (exchange === "NSE" && typeof parsed?.lastNseSyncAt === "string") {
+    store.lastSyncAt = parsed.lastNseSyncAt;
+  } else if (exchange === "BSE" && typeof parsed?.lastBseSyncAt === "string") {
+    store.lastSyncAt = parsed.lastBseSyncAt;
+  } else if (exchange === "COMBINED" && typeof parsed?.lastCombinedSyncAt === "string") {
+    store.lastSyncAt = parsed.lastCombinedSyncAt;
+  } else if (exchange === "DEDUP" && typeof parsed?.lastDedupSyncAt === "string") {
+    store.lastSyncAt = parsed.lastDedupSyncAt;
+  } else {
+    store.lastSyncAt = null;
+  }
+
+  if (parsed?.lastSyncStats && typeof parsed.lastSyncStats === "object") {
+    store.lastSyncStats = parsed.lastSyncStats;
+  } else if (exchange === "NSE" && parsed?.lastNseSyncStats && typeof parsed.lastNseSyncStats === "object") {
+    store.lastSyncStats = parsed.lastNseSyncStats;
+  } else if (exchange === "BSE" && parsed?.lastBseSyncStats && typeof parsed.lastBseSyncStats === "object") {
+    store.lastSyncStats = parsed.lastBseSyncStats;
+  } else if (exchange === "COMBINED" && parsed?.lastCombinedSyncStats && typeof parsed.lastCombinedSyncStats === "object") {
+    store.lastSyncStats = parsed.lastCombinedSyncStats;
+  } else if (exchange === "DEDUP" && parsed?.lastDedupSyncStats && typeof parsed.lastDedupSyncStats === "object") {
+    store.lastSyncStats = parsed.lastDedupSyncStats;
+  } else {
+    store.lastSyncStats = null;
+  }
+
+  if (typeof parsed?.sourceFingerprint === "string") {
+    store.sourceFingerprint = parsed.sourceFingerprint;
+  }
+}
+
+async function loadStore(exchange) {
+  const store = stores[exchange];
+  if (store.loaded) {
+    return;
+  }
+
+  let parsed = null;
+  let source = "";
+
+  if (isDatabaseEnabled()) {
+    try {
+      parsed = await readSnapshotFromDatabase(getStoreSnapshotKey(exchange));
+      if (parsed) {
+        source = "postgres";
+      }
+    } catch (error) {
+      const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB load error"));
+      log(`Failed to load ${exchange} announcement store from Postgres. Falling back to file.`, { message });
+    }
+  }
+
+  if (!parsed) {
+    try {
+      const text = await readFile(store.storagePath, "utf8");
+      parsed = JSON.parse(text);
+      source = "file";
+    } catch (error) {
+      const code = error?.code;
+      if (code === "ENOENT") {
+        log(`${exchange} announcement store not found. Starting fresh.`, { path: store.storagePath });
+      } else {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        log(`Failed to load ${exchange} announcement store. Starting fresh.`, { message, path: store.storagePath });
+      }
+    }
+  }
+
+  if (!parsed) {
+    store.announcements = [];
+    store.keys.clear();
+    store.lastSyncAt = null;
+    store.lastSyncStats = null;
+    store.loaded = true;
+    return;
+  }
+
+  applyStoreSnapshot(exchange, store, parsed);
+
+  if (source === "file" && isDatabaseEnabled()) {
+    try {
+      await writeSnapshotToDatabase(getStoreSnapshotKey(exchange), buildStoreSnapshotPayload(exchange, store));
+      source = "file->postgres";
+    } catch (error) {
+      const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
+      log(`Failed to backfill ${exchange} store into Postgres`, { message });
+    }
+  }
+
+  log(`Loaded ${exchange} announcement store`, {
+    count: store.announcements.length,
+    path: store.storagePath,
+    source
+  });
+
+  store.loaded = true;
+}
+
+async function persistStore(exchange) {
+  const store = stores[exchange];
+  const payload = buildStoreSnapshotPayload(exchange, store);
+
+  if (isDatabaseEnabled()) {
+    try {
+      await writeSnapshotToDatabase(getStoreSnapshotKey(exchange), payload);
+    } catch (error) {
+      const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
+      log(`Failed to persist ${exchange} announcement store to Postgres`, { message });
+    }
+  }
+
   await mkdir(dirname(store.storagePath), { recursive: true });
-  await writeFile(
-    store.storagePath,
-    JSON.stringify(
-      {
-        updatedAt: new Date().toISOString(),
-        exchange,
-        sourceFingerprint: typeof store.sourceFingerprint === "string" ? store.sourceFingerprint : null,
-        lastSyncAt: store.lastSyncAt,
-        lastSyncStats: store.lastSyncStats,
-        total: store.announcements.length,
-        announcements: store.announcements,
-        ...legacySyncFields
-      },
-      null,
-      2
-    ),
-    "utf8"
-  );
+  await writeFile(store.storagePath, JSON.stringify(payload, null, 2), "utf8");
 }
 
 function trimStore(exchange) {
@@ -3511,7 +3760,12 @@ async function handleStatus(req, res) {
     aiLabelsCount: aiLabelStore.records.length,
     aiLabelsSuccessCount: aiSuccessCount,
     aiLabelsFailureCount: aiFailureCount,
-    aiLabelsLastSyncAt: aiLabelStore.lastSyncAt
+    aiLabelsLastSyncAt: aiLabelStore.lastSyncAt,
+    database: {
+      enabled: isDatabaseEnabled(),
+      ready: databaseReady,
+      table: databaseSnapshotTable
+    }
   });
 }
 
@@ -3603,5 +3857,15 @@ server.listen(port, "0.0.0.0", () => {
 
 process.on("SIGTERM", () => {
   log("SIGTERM received, shutting down");
-  server.close(() => process.exit(0));
+  server.close(async () => {
+    if (databasePool) {
+      try {
+        await databasePool.end();
+      } catch (error) {
+        const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB close error"));
+        log("Failed to close Postgres pool cleanly", { message });
+      }
+    }
+    process.exit(0);
+  });
 });

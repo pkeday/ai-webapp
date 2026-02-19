@@ -22,6 +22,11 @@ Production setup in this project:
 - `CORS_ORIGIN`: Comma-separated allowed frontend origins.
 - `CRON_SECRET`: Shared secret for worker/cron protected API routes.
 - `API_BASE_URL`: API URL used by worker/cron scripts.
+- `DATABASE_URL`: Postgres connection string for durable storage.
+- `DATABASE_SSL_MODE`: `require` in Render production, `disable` for local DB.
+- `DATABASE_MAX_CONNECTIONS`: PG pool max connections (default: `10`).
+- `DATABASE_CONNECTION_TIMEOUT_MS`: PG connect timeout (default: `10000`).
+- `DATABASE_IDLE_TIMEOUT_MS`: PG idle timeout (default: `30000`).
 - `NSE_INDEX`: NSE index for announcement API (`equities` by default).
 - `NSE_LOOKBACK_DAYS`: Date lookback window used by each sync run (default: `1`).
 - `NSE_REQUEST_TIMEOUT_MS`: Per-request timeout for NSE calls (default: `30000`).
@@ -80,9 +85,9 @@ Production setup in this project:
 - GitHub Actions triggers `POST /api/jobs/daily` on schedule.
 - Server fetches NSE and BSE corporate announcements in the same cron run.
 - BSE records are enriched with `isin` using BSE scrip master data (`ListofScripData` API) before storage.
-- New records are deduplicated per exchange and stored in separate files (`NSE_STORAGE_FILE`, `BSE_STORAGE_FILE`).
-- A separate combined union table (`COMBINED_STORAGE_FILE`) is rebuilt as `exchange=NSE+BSE` (no dedup).
-- A separate dedup table (`DEDUP_STORAGE_FILE`) is rebuilt using `ISIN + PDF hash` and served with `exchange=DEDUP`.
-- If enabled, AI classification runs after dedup in the same cron run and stores per-announcement labels in `data/announcement_ai_labels.json`.
+- New records are deduplicated per exchange and persisted to Postgres snapshot storage.
+- A separate combined union table (`exchange=NSE+BSE`) and dedup table (`exchange=DEDUP`) are persisted in Postgres and served via API.
+- If Postgres is unavailable, backend falls back to local JSON files (`NSE_STORAGE_FILE`, `BSE_STORAGE_FILE`, `COMBINED_STORAGE_FILE`, `DEDUP_STORAGE_FILE`, `AI_LABELS_STORAGE_FILE`).
+- If enabled, AI classification runs after dedup in the same cron run and stores per-announcement labels persistently.
 - For fast iteration/testing, `POST /api/jobs/ai-only` runs only AI classification over recent dedup announcements (no NSE/BSE refresh, no dedup rebuild).
 - Notifications data is served via `GET /api/notifications/announcements`.
