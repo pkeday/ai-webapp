@@ -356,17 +356,26 @@ function getSourceAnnouncementKey(item, exchange) {
   return `${exchange}:FALLBACK:${timestamp}|${symbol}|${subject}`;
 }
 
+function buildStoreFingerprint(exchange, sampleSize = 20) {
+  const store = stores[exchange];
+  const list = Array.isArray(store?.announcements) ? store.announcements : [];
+  const safeSampleSize = Math.max(1, Math.min(sampleSize, list.length));
+  const sampledKeys = [];
+
+  for (let index = 0; index < safeSampleSize; index += 1) {
+    const key = getAnnouncementKey(exchange, list[index]) ?? `INDEX:${index}`;
+    sampledKeys.push(key);
+  }
+
+  return `${exchange}|COUNT:${list.length}|HEAD:${sampledKeys.join(",")}`;
+}
+
 function buildCombinedSourceFingerprint() {
-  return [
-    stores.NSE.lastSyncAt ?? "none",
-    stores.BSE.lastSyncAt ?? "none",
-    String(stores.NSE.announcements.length),
-    String(stores.BSE.announcements.length)
-  ].join("|");
+  return [buildStoreFingerprint("NSE"), buildStoreFingerprint("BSE")].join("|");
 }
 
 function buildDedupSourceFingerprint() {
-  return [stores.COMBINED.lastSyncAt ?? "none", String(stores.COMBINED.announcements.length)].join("|");
+  return buildStoreFingerprint("COMBINED");
 }
 
 function buildNseListingByIsin() {
@@ -523,6 +532,33 @@ function shouldPreferDedupCandidate(existingRecord, candidate) {
   return String(candidate?.insertedAt ?? "").localeCompare(String(existingRecord?.insertedAt ?? "")) > 0;
 }
 
+function buildKnownPdfHashByUrl() {
+  const knownPdfHashByUrl = new Map();
+  const existingDedup = Array.isArray(stores.DEDUP?.announcements) ? stores.DEDUP.announcements : [];
+
+  for (const item of existingDedup) {
+    const hash = normalizeText(item?.pdf_hash);
+    if (!hash) {
+      continue;
+    }
+
+    const urls = [item?.attachment_url];
+    const sourceAnnouncements = Array.isArray(item?.sourceAnnouncements) ? item.sourceAnnouncements : [];
+    for (const source of sourceAnnouncements) {
+      urls.push(source?.attachmentUrl ?? source?.attachment_url);
+    }
+
+    for (const url of urls) {
+      const normalizedUrl = normalizeText(url);
+      if (normalizedUrl && !knownPdfHashByUrl.has(normalizedUrl)) {
+        knownPdfHashByUrl.set(normalizedUrl, hash);
+      }
+    }
+  }
+
+  return knownPdfHashByUrl;
+}
+
 function buildCombinedAnnouncements() {
   const sourceItems = [...stores.NSE.announcements, ...stores.BSE.announcements];
   const nseListingByIsin = buildNseListingByIsin();
@@ -632,6 +668,8 @@ async function buildDedupAnnouncements() {
   const sourceItems = [...stores.COMBINED.announcements];
   const nseListingByIsin = buildNseListingByIsin();
   const pdfHashCache = new Map();
+  const knownPdfHashByUrl = buildKnownPdfHashByUrl();
+  const preloadedPdfHashCount = knownPdfHashByUrl.size;
 
   const resolvePdfHash = async (attachmentUrl) => {
     const normalized = normalizeText(attachmentUrl);
@@ -639,8 +677,21 @@ async function buildDedupAnnouncements() {
       return null;
     }
 
+    const knownHash = knownPdfHashByUrl.get(normalized);
+    if (knownHash) {
+      return knownHash;
+    }
+
     if (!pdfHashCache.has(normalized)) {
-      pdfHashCache.set(normalized, fetchPdfHashFromUrl(normalized));
+      pdfHashCache.set(
+        normalized,
+        fetchPdfHashFromUrl(normalized).then((hash) => {
+          if (hash) {
+            knownPdfHashByUrl.set(normalized, hash);
+          }
+          return hash;
+        })
+      );
     }
 
     return pdfHashCache.get(normalized);
@@ -799,7 +850,8 @@ async function buildDedupAnnouncements() {
       missingIsinCount,
       withPdfHashCount,
       missingPdfHashCount,
-      hashedUrlCount: pdfHashCache.size
+      hashedUrlCount: pdfHashCache.size,
+      preloadedPdfHashCount
     }
   };
 }
@@ -829,17 +881,23 @@ async function refreshCombinedAnnouncements(trigger = "manual", force = false) {
       typeof store.lastSyncStats?.sourceNseSyncAt === "string" ? store.lastSyncStats.sourceNseSyncAt : null;
     const combinedSourceBseSyncAt =
       typeof store.lastSyncStats?.sourceBseSyncAt === "string" ? store.lastSyncStats.sourceBseSyncAt : null;
-    const sourceUnchanged =
-      store.sourceFingerprint === fingerprint ||
-      (sourceNseSyncAt &&
-        sourceBseSyncAt &&
-        combinedSourceNseSyncAt === sourceNseSyncAt &&
-        combinedSourceBseSyncAt === sourceBseSyncAt);
+    const sourceUnchanged = store.sourceFingerprint === fingerprint;
     if (!force && store.loaded && sourceUnchanged) {
-      return store.lastSyncStats ?? {
+      if (store.lastSyncStats && typeof store.lastSyncStats === "object") {
+        return {
+          ...store.lastSyncStats,
+          trigger,
+          skipped: true,
+          totalStored: store.announcements.length,
+          syncedAt: store.lastSyncAt
+        };
+      }
+
+      return {
         exchange: "COMBINED",
         trigger,
         dedupeRule: "None (NSE+BSE raw union)",
+        skipped: true,
         totalStored: store.announcements.length,
         syncedAt: store.lastSyncAt
       };
@@ -905,12 +963,25 @@ async function refreshDedupAnnouncements(trigger = "manual", force = false) {
     const sourceCombinedSyncAt = stores.COMBINED.lastSyncAt ?? null;
     const dedupSourceSyncAt =
       typeof store.lastSyncStats?.sourceCombinedSyncAt === "string" ? store.lastSyncStats.sourceCombinedSyncAt : null;
-    const sourceUnchanged = store.sourceFingerprint === fingerprint || (sourceCombinedSyncAt && dedupSourceSyncAt === sourceCombinedSyncAt);
+    const sourceUnchanged = store.sourceFingerprint === fingerprint;
     if (!force && store.loaded && sourceUnchanged) {
-      return store.lastSyncStats ?? {
+      if (store.lastSyncStats && typeof store.lastSyncStats === "object") {
+        return {
+          ...store.lastSyncStats,
+          trigger,
+          skipped: true,
+          sourceCombinedSyncAt: sourceCombinedSyncAt ?? dedupSourceSyncAt ?? null,
+          totalStored: store.announcements.length,
+          syncedAt: store.lastSyncAt
+        };
+      }
+
+      return {
         exchange: "DEDUP",
         trigger,
         dedupeRule: "ISIN + PDF hash",
+        skipped: true,
+        sourceCombinedSyncAt: sourceCombinedSyncAt ?? dedupSourceSyncAt ?? null,
         totalStored: store.announcements.length,
         syncedAt: store.lastSyncAt
       };
@@ -935,6 +1006,7 @@ async function refreshDedupAnnouncements(trigger = "manual", force = false) {
       withPdfHashCount: result.stats.withPdfHashCount,
       missingPdfHashCount: result.stats.missingPdfHashCount,
       hashedUrlCount: result.stats.hashedUrlCount,
+      preloadedPdfHashCount: result.stats.preloadedPdfHashCount,
       sourceCombinedSyncAt,
       totalStored: store.announcements.length,
       trimmedCount,
@@ -1473,10 +1545,10 @@ async function handleCronRun(req, res) {
     syncNseAnnouncements(trigger),
     syncBseAnnouncements(trigger)
   ]);
-  const combinedResult = await refreshCombinedAnnouncements(trigger, true)
+  const combinedResult = await refreshCombinedAnnouncements(trigger)
     .then((value) => ({ status: "fulfilled", value }))
     .catch((reason) => ({ status: "rejected", reason }));
-  const dedupResult = await refreshDedupAnnouncements(trigger, true)
+  const dedupResult = await refreshDedupAnnouncements(trigger)
     .then((value) => ({ status: "fulfilled", value }))
     .catch((reason) => ({ status: "rejected", reason }));
 
