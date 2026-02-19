@@ -45,8 +45,11 @@ const dedupIncrementalMaxCandidates = Number.parseInt(process.env.DEDUP_INCREMEN
 const pdfHashTimeoutMs = Number.parseInt(process.env.PDF_HASH_TIMEOUT_MS ?? "20000", 10);
 const pdfHashConcurrency = Number.parseInt(process.env.PDF_HASH_CONCURRENCY ?? "4", 10);
 const aiLabelsStoragePath = resolve(process.cwd(), process.env.AI_LABELS_STORAGE_FILE ?? "data/announcement_ai_labels.json");
+const aiReviewsStoragePath = resolve(process.cwd(), process.env.AI_REVIEWS_STORAGE_FILE ?? "data/announcement_ai_reviews.json");
 const aiCriteriaVersion = process.env.AI_CRITERIA_VERSION ?? "v1";
 const aiClassifierEnabled = normalizeText(process.env.AI_CLASSIFIER_ENABLED ?? "false").toLowerCase() === "true";
+const aiPromptLearningMinExamples = Number.parseInt(process.env.AI_PROMPT_LEARNING_MIN_EXAMPLES ?? "2", 10);
+const aiPromptLearningMaxRules = Number.parseInt(process.env.AI_PROMPT_LEARNING_MAX_RULES ?? "8", 10);
 const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "120", 10);
 const aiConcurrency = Number.parseInt(process.env.AI_CLASSIFICATION_CONCURRENCY ?? "2", 10);
 const aiPdfFetchTimeoutMs = Number.parseInt(process.env.AI_PDF_FETCH_TIMEOUT_MS ?? "30000", 10);
@@ -83,6 +86,7 @@ const databaseIdleTimeoutMs = Number.parseInt(process.env.DATABASE_IDLE_TIMEOUT_
 const databaseSnapshotTable = "announcement_snapshots";
 const databaseStoreSnapshotPrefix = "store:";
 const databaseAiLabelSnapshotKey = "ai-labels";
+const databaseAiReviewSnapshotKey = "ai-reviews";
 
 const notes = [];
 let noteId = 1;
@@ -225,6 +229,7 @@ const aiCategoryDefinitions = {
 const aiCategoryGuidanceText = aiClassificationCategories
   .map((category) => `- ${category}: ${aiCategoryDefinitions[category] || "Use only when applicable."}`)
   .join("\n");
+const aiCategorySet = new Set(aiClassificationCategories);
 
 const aiJsonSchema = {
   type: "object",
@@ -251,7 +256,7 @@ const aiJsonSchema = {
   }
 };
 
-const aiSystemPrompt = [
+const aiSystemPromptBaseSections = [
   "You are a strict corporate announcement classifier for Indian listed-company disclosures.",
   "Return ONLY valid JSON matching the required schema.",
   "Use only categories from the provided enum; never invent a category.",
@@ -267,7 +272,7 @@ const aiSystemPrompt = [
   "Allowed categories and concise guidance:",
   aiCategoryGuidanceText,
   "Set needs_escalation true when confidence is below 0.8 or evidence is weak."
-].join("\n");
+];
 
 const aiLabelStore = {
   loaded: false,
@@ -276,6 +281,18 @@ const aiLabelStore = {
   byKey: new Map(),
   byInputHash: new Map(),
   lastSyncAt: null
+};
+
+const aiReviewStore = {
+  loaded: false,
+  syncInFlight: null,
+  records: [],
+  byKey: new Map(),
+  lastSyncAt: null
+};
+const aiPromptLearningCache = {
+  fingerprint: "",
+  rules: []
 };
 
 const { Pool } = pg;
@@ -1026,6 +1043,137 @@ function buildAiInputHash(announcement, criteriaVersion = aiCriteriaVersion) {
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
+function normalizeAiCategory(value) {
+  return normalizeText(value).toLowerCase();
+}
+
+function buildAiReviewMismatchPairs() {
+  const mismatches = new Map();
+
+  for (const reviewRecord of aiReviewStore.records) {
+    const key = normalizeAnnouncementKey(reviewRecord?.dedupAnnouncementKey);
+    const reviewedLabel = normalizeAiCategory(reviewRecord?.reviewedLabel);
+    if (!key || !aiCategorySet.has(reviewedLabel)) {
+      continue;
+    }
+
+    const aiRecord = aiLabelStore.byKey.get(key);
+    if (!aiRecord || normalizeText(aiRecord?.status).toUpperCase() !== "SUCCESS") {
+      continue;
+    }
+
+    const aiLabel = normalizeAiCategory(aiRecord?.label);
+    if (!aiCategorySet.has(aiLabel) || aiLabel === reviewedLabel) {
+      continue;
+    }
+
+    const pairKey = `${aiLabel}|${reviewedLabel}`;
+    const existing = mismatches.get(pairKey);
+    if (existing) {
+      existing.count += 1;
+      continue;
+    }
+
+    mismatches.set(pairKey, {
+      predictedLabel: aiLabel,
+      reviewedLabel,
+      count: 1
+    });
+  }
+
+  return [...mismatches.values()].sort((left, right) => {
+    if (left.count === right.count) {
+      return `${left.predictedLabel}|${left.reviewedLabel}`.localeCompare(`${right.predictedLabel}|${right.reviewedLabel}`);
+    }
+    return right.count - left.count;
+  });
+}
+
+function buildAiPromptLearnedRules() {
+  const cacheFingerprint = [
+    normalizeText(aiReviewStore.lastSyncAt),
+    String(aiReviewStore.records.length),
+    normalizeText(aiLabelStore.lastSyncAt),
+    String(aiLabelStore.records.length),
+    normalizeText(aiCriteriaVersion)
+  ].join("|");
+  if (aiPromptLearningCache.fingerprint === cacheFingerprint) {
+    return [...aiPromptLearningCache.rules];
+  }
+
+  const minExamples = Math.max(1, normalizePositiveInt(aiPromptLearningMinExamples, 2));
+  const maxRules = Math.max(1, Math.min(20, normalizePositiveInt(aiPromptLearningMaxRules, 8)));
+
+  const rules = buildAiReviewMismatchPairs()
+    .filter((entry) => entry.count >= minExamples)
+    .slice(0, maxRules)
+    .map(
+      (entry) =>
+        `When uncertain between ${entry.predictedLabel} and ${entry.reviewedLabel}, prefer ${entry.reviewedLabel} if evidence exists (${entry.count} reviewed correction${entry.count === 1 ? "" : "s"}).`
+    );
+
+  aiPromptLearningCache.fingerprint = cacheFingerprint;
+  aiPromptLearningCache.rules = rules;
+  return [...rules];
+}
+
+function getAiSystemPromptText() {
+  const learnedRules = buildAiPromptLearnedRules();
+  if (learnedRules.length === 0) {
+    return aiSystemPromptBaseSections.join("\n");
+  }
+
+  return [...aiSystemPromptBaseSections, "Human-reviewed correction rules:", ...learnedRules].join("\n");
+}
+
+function buildAiReviewDiagnostics() {
+  const reviewedCount = aiReviewStore.records.length;
+  let matchedCount = 0;
+  let mismatchCount = 0;
+  let noPredictionCount = 0;
+
+  for (const reviewRecord of aiReviewStore.records) {
+    const key = normalizeAnnouncementKey(reviewRecord?.dedupAnnouncementKey);
+    const reviewedLabel = normalizeAiCategory(reviewRecord?.reviewedLabel);
+    if (!key || !aiCategorySet.has(reviewedLabel)) {
+      continue;
+    }
+
+    const aiRecord = aiLabelStore.byKey.get(key);
+    if (!aiRecord || normalizeText(aiRecord?.status).toUpperCase() !== "SUCCESS") {
+      noPredictionCount += 1;
+      continue;
+    }
+
+    const aiLabel = normalizeAiCategory(aiRecord?.label);
+    if (!aiCategorySet.has(aiLabel)) {
+      noPredictionCount += 1;
+      continue;
+    }
+
+    if (aiLabel === reviewedLabel) {
+      matchedCount += 1;
+    } else {
+      mismatchCount += 1;
+    }
+  }
+
+  const comparedCount = matchedCount + mismatchCount;
+  const topMismatches = buildAiReviewMismatchPairs().slice(0, 10);
+  const learnedRules = buildAiPromptLearnedRules();
+
+  return {
+    reviewedCount,
+    comparedCount,
+    matchedCount,
+    mismatchCount,
+    noPredictionCount,
+    agreementRate: comparedCount > 0 ? Number((matchedCount / comparedCount).toFixed(4)) : null,
+    topMismatches,
+    learnedRules
+  };
+}
+
 function indexAiLabelStore() {
   aiLabelStore.byKey = new Map();
   aiLabelStore.byInputHash = new Map();
@@ -1185,6 +1333,187 @@ async function persistAiLabelStore() {
 
   await mkdir(dirname(aiLabelsStoragePath), { recursive: true });
   await writeFile(aiLabelsStoragePath, JSON.stringify(payload, null, 2), "utf8");
+}
+
+function indexAiReviewStore() {
+  aiReviewStore.byKey = new Map();
+  for (const record of aiReviewStore.records) {
+    const key = normalizeAnnouncementKey(record?.dedupAnnouncementKey);
+    if (!key) {
+      continue;
+    }
+    aiReviewStore.byKey.set(key, record);
+  }
+}
+
+async function loadAiReviewStore() {
+  if (aiReviewStore.loaded) {
+    return;
+  }
+
+  if (aiReviewStore.syncInFlight) {
+    await aiReviewStore.syncInFlight;
+    return;
+  }
+
+  aiReviewStore.syncInFlight = (async () => {
+    let parsed = null;
+    let source = "";
+
+    if (isDatabaseEnabled()) {
+      try {
+        parsed = await readSnapshotFromDatabase(databaseAiReviewSnapshotKey);
+        if (parsed) {
+          source = "postgres";
+        }
+      } catch (error) {
+        const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB load error"));
+        log("Failed to load AI review store from Postgres. Falling back to file.", { message });
+      }
+    }
+
+    if (!parsed) {
+      try {
+        const text = await readFile(aiReviewsStoragePath, "utf8");
+        parsed = JSON.parse(text);
+        source = "file";
+      } catch (error) {
+        if (error?.code === "ENOENT") {
+          log("AI review store not found. Starting fresh.", { path: aiReviewsStoragePath });
+        } else {
+          const message = error instanceof Error ? error.message : "Unknown AI review store load error";
+          log("Failed to load AI review store. Starting fresh.", { message, path: aiReviewsStoragePath });
+        }
+      }
+    }
+
+    if (!parsed) {
+      aiReviewStore.records = [];
+      aiReviewStore.lastSyncAt = null;
+      indexAiReviewStore();
+      aiReviewStore.loaded = true;
+      return;
+    }
+
+    const records = Array.isArray(parsed?.records) ? parsed.records : Array.isArray(parsed) ? parsed : [];
+    aiReviewStore.records = records
+      .map((record) => {
+        const reviewedLabel = normalizeAiCategory(record?.reviewedLabel ?? record?.label);
+        if (!aiCategorySet.has(reviewedLabel)) {
+          return null;
+        }
+
+        const dedupAnnouncementKey = normalizeAnnouncementKey(record?.dedupAnnouncementKey);
+        if (!dedupAnnouncementKey) {
+          return null;
+        }
+
+        const aiConfidenceAtReview = Number.parseFloat(String(record?.aiConfidenceAtReview ?? ""));
+        return {
+          dedupAnnouncementKey,
+          reviewedLabel,
+          reviewedNotes: normalizeText(record?.reviewedNotes ?? record?.notes),
+          reviewer: normalizeText(record?.reviewer),
+          reviewedAt: normalizeText(record?.reviewedAt || record?.updatedAt || new Date().toISOString()),
+          aiLabelAtReview: normalizeAiCategory(record?.aiLabelAtReview),
+          aiConfidenceAtReview: Number.isFinite(aiConfidenceAtReview) ? clampConfidence(aiConfidenceAtReview) : null,
+          aiReasonAtReview: normalizeText(record?.aiReasonAtReview)
+        };
+      })
+      .filter(Boolean);
+    aiReviewStore.lastSyncAt =
+      typeof parsed?.lastSyncAt === "string" ? parsed.lastSyncAt : typeof parsed?.updatedAt === "string" ? parsed.updatedAt : null;
+    indexAiReviewStore();
+
+    if (source === "file" && isDatabaseEnabled()) {
+      try {
+        await writeSnapshotToDatabase(databaseAiReviewSnapshotKey, {
+          updatedAt: aiReviewStore.lastSyncAt || new Date().toISOString(),
+          total: aiReviewStore.records.length,
+          records: aiReviewStore.records
+        });
+        source = "file->postgres";
+      } catch (error) {
+        const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
+        log("Failed to backfill AI review store into Postgres", { message });
+      }
+    }
+
+    log("Loaded AI review store", {
+      count: aiReviewStore.records.length,
+      path: aiReviewsStoragePath,
+      source
+    });
+
+    aiReviewStore.loaded = true;
+  })();
+
+  try {
+    await aiReviewStore.syncInFlight;
+  } finally {
+    aiReviewStore.syncInFlight = null;
+  }
+}
+
+async function persistAiReviewStore() {
+  aiReviewStore.lastSyncAt = new Date().toISOString();
+  const payload = {
+    updatedAt: aiReviewStore.lastSyncAt,
+    total: aiReviewStore.records.length,
+    records: aiReviewStore.records
+  };
+
+  if (isDatabaseEnabled()) {
+    try {
+      await writeSnapshotToDatabase(databaseAiReviewSnapshotKey, payload);
+    } catch (error) {
+      const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
+      log("Failed to persist AI review store to Postgres", { message });
+    }
+  }
+
+  await mkdir(dirname(aiReviewsStoragePath), { recursive: true });
+  await writeFile(aiReviewsStoragePath, JSON.stringify(payload, null, 2), "utf8");
+}
+
+function getAiReviewRecordForKey(dedupAnnouncementKey) {
+  const key = normalizeAnnouncementKey(dedupAnnouncementKey);
+  if (!key) {
+    return null;
+  }
+  return aiReviewStore.byKey.get(key) ?? null;
+}
+
+function upsertAiReviewRecord(record) {
+  const key = normalizeAnnouncementKey(record?.dedupAnnouncementKey);
+  const reviewedLabel = normalizeAiCategory(record?.reviewedLabel);
+  if (!key || !aiCategorySet.has(reviewedLabel)) {
+    return;
+  }
+
+  const existingIndex = aiReviewStore.records.findIndex(
+    (item) => normalizeAnnouncementKey(item?.dedupAnnouncementKey) === key
+  );
+
+  const aiConfidenceAtReview = Number.parseFloat(String(record?.aiConfidenceAtReview ?? ""));
+  const normalizedRecord = {
+    dedupAnnouncementKey: key,
+    reviewedLabel,
+    reviewedNotes: normalizeText(record?.reviewedNotes),
+    reviewer: normalizeText(record?.reviewer),
+    reviewedAt: normalizeText(record?.reviewedAt || new Date().toISOString()),
+    aiLabelAtReview: normalizeAiCategory(record?.aiLabelAtReview),
+    aiConfidenceAtReview: Number.isFinite(aiConfidenceAtReview) ? clampConfidence(aiConfidenceAtReview) : null,
+    aiReasonAtReview: normalizeText(record?.aiReasonAtReview)
+  };
+
+  if (existingIndex >= 0) {
+    aiReviewStore.records[existingIndex] = normalizedRecord;
+  } else {
+    aiReviewStore.records.push(normalizedRecord);
+  }
+
+  aiReviewStore.byKey.set(key, normalizedRecord);
 }
 
 function getAiLabelRecordForKey(dedupAnnouncementKey) {
@@ -1586,6 +1915,7 @@ function buildClassificationUserPrompt(announcement, criteriaVersion, textSnippe
 }
 
 async function classifyWithOpenAi(model, prompt, apiKey, baseUrl) {
+  const systemPrompt = getAiSystemPromptText();
   const response = await fetch(`${baseUrl}/responses`, {
     method: "POST",
     headers: {
@@ -1600,7 +1930,7 @@ async function classifyWithOpenAi(model, prompt, apiKey, baseUrl) {
           content: [
             {
               type: "input_text",
-              text: aiSystemPrompt
+              text: systemPrompt
             }
           ]
         },
@@ -1647,6 +1977,7 @@ async function classifyWithOpenAi(model, prompt, apiKey, baseUrl) {
 }
 
 async function classifyWithAnthropic(model, prompt, apiKey, baseUrl) {
+  const systemPrompt = getAiSystemPromptText();
   const response = await fetch(`${baseUrl}/messages`, {
     method: "POST",
     headers: {
@@ -1658,7 +1989,7 @@ async function classifyWithAnthropic(model, prompt, apiKey, baseUrl) {
       model,
       max_tokens: 450,
       temperature: 0,
-      system: aiSystemPrompt,
+      system: systemPrompt,
       messages: [
         {
           role: "user",
@@ -1694,6 +2025,7 @@ async function classifyWithAnthropic(model, prompt, apiKey, baseUrl) {
 }
 
 async function classifyWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
+  const systemPrompt = getAiSystemPromptText();
   const response = await fetch(`${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: {
@@ -1703,7 +2035,7 @@ async function classifyWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
       systemInstruction: {
         parts: [
           {
-            text: aiSystemPrompt
+            text: systemPrompt
           }
         ]
       },
@@ -1987,7 +2319,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
   const maxItemsOverrideRaw = Number.parseInt(String(options?.maxItems ?? ""), 10);
   const maxItemsOverride = Number.isFinite(maxItemsOverrideRaw) && maxItemsOverrideRaw > 0 ? maxItemsOverrideRaw : null;
   const scanRecentWhenNoTouched = options?.scanRecentWhenNoTouched === true;
-  await loadAiLabelStore();
+  await Promise.all([loadAiLabelStore(), loadAiReviewStore()]);
 
   if (!aiClassifierEnabled && !forceEnabled) {
     return {
@@ -2203,6 +2535,11 @@ function enrichDedupAnnouncementWithAi(announcement) {
     return announcement;
   }
 
+  const reviewRecord = getAiReviewRecordForKey(key);
+  const reviewLabel = reviewRecord?.reviewedLabel || null;
+  const reviewNotes = reviewRecord?.reviewedNotes || null;
+  const reviewedAt = reviewRecord?.reviewedAt || null;
+
   const aiRecord = getAiLabelRecordForKey(key);
   if (!aiRecord) {
     return {
@@ -2213,7 +2550,10 @@ function enrichDedupAnnouncementWithAi(announcement) {
       ai_error: null,
       ai_failure_type: null,
       ai_retryable: null,
-      ai_status: "MISSING"
+      ai_status: "MISSING",
+      review_label: reviewLabel,
+      review_notes: reviewNotes,
+      reviewed_at: reviewedAt
     };
   }
 
@@ -2233,7 +2573,10 @@ function enrichDedupAnnouncementWithAi(announcement) {
     ai_retryable: isFailed ? Boolean(aiRecord.retryable) : null,
     ai_status: aiStatus || "UNKNOWN",
     ai_provider: aiRecord.provider || null,
-    ai_model: aiRecord.model || null
+    ai_model: aiRecord.model || null,
+    review_label: reviewLabel,
+    review_notes: reviewNotes,
+    reviewed_at: reviewedAt
   };
 }
 
@@ -3343,6 +3686,120 @@ async function handleCreateNote(req, res) {
   });
 }
 
+async function handleGetAiCategories(req, res) {
+  await Promise.all([loadAiLabelStore(), loadAiReviewStore()]);
+  const diagnostics = buildAiReviewDiagnostics();
+
+  sendJson(req, res, 200, {
+    categories: aiClassificationCategories.map((category) => ({
+      value: category,
+      description: aiCategoryDefinitions[category] || ""
+    })),
+    promptLearning: {
+      minExamples: Math.max(1, normalizePositiveInt(aiPromptLearningMinExamples, 2)),
+      maxRules: Math.max(1, Math.min(20, normalizePositiveInt(aiPromptLearningMaxRules, 8))),
+      activeRules: diagnostics.learnedRules.length,
+      learnedRules: diagnostics.learnedRules
+    },
+    diagnostics
+  });
+}
+
+async function handleBulkAiReviews(req, res) {
+  await Promise.all([loadStore("DEDUP"), loadAiLabelStore(), loadAiReviewStore()]);
+  const body = await readJsonBody(req);
+  const reviews = Array.isArray(body?.reviews) ? body.reviews : Array.isArray(body?.items) ? body.items : [];
+  const reviewer = normalizeText(body?.reviewer);
+
+  if (reviews.length === 0) {
+    sendJson(req, res, 400, { error: "Field 'reviews' must be a non-empty array." });
+    return;
+  }
+
+  if (reviews.length > 2000) {
+    sendJson(req, res, 400, { error: "Too many reviews in one request. Limit is 2000." });
+    return;
+  }
+
+  const dedupKeySet = new Set(
+    stores.DEDUP.announcements
+      .map((item) => normalizeAnnouncementKey(item?.dedupAnnouncementKey ?? item?.mergedAnnouncementKey ?? item?.announcementKey))
+      .filter(Boolean)
+  );
+
+  const nowIso = new Date().toISOString();
+  const invalid = [];
+  const saved = [];
+  let missingDedupCount = 0;
+
+  for (let index = 0; index < reviews.length; index += 1) {
+    const entry = reviews[index];
+    const dedupAnnouncementKey = normalizeAnnouncementKey(
+      entry?.dedupAnnouncementKey ?? entry?.announcementKey ?? entry?.key ?? entry?.sourceKey
+    );
+    const reviewedLabel = normalizeAiCategory(entry?.reviewedLabel ?? entry?.label ?? entry?.category);
+    const reviewedNotes = normalizeText(entry?.reviewedNotes ?? entry?.notes).slice(0, 800);
+
+    if (!dedupAnnouncementKey) {
+      invalid.push({ index, error: "Missing dedupAnnouncementKey." });
+      continue;
+    }
+
+    if (!aiCategorySet.has(reviewedLabel)) {
+      invalid.push({ index, key: dedupAnnouncementKey, error: `Invalid reviewedLabel '${reviewedLabel || "-"}'.` });
+      continue;
+    }
+
+    if (!dedupKeySet.has(dedupAnnouncementKey)) {
+      missingDedupCount += 1;
+    }
+
+    const aiRecord = getAiLabelRecordForKey(dedupAnnouncementKey);
+    upsertAiReviewRecord({
+      dedupAnnouncementKey,
+      reviewedLabel,
+      reviewedNotes,
+      reviewer,
+      reviewedAt: nowIso,
+      aiLabelAtReview: normalizeAiCategory(aiRecord?.label),
+      aiConfidenceAtReview: Number(aiRecord?.confidence),
+      aiReasonAtReview: normalizeText(aiRecord?.reason || aiRecord?.error)
+    });
+
+    saved.push({
+      dedupAnnouncementKey,
+      reviewedLabel
+    });
+  }
+
+  if (saved.length === 0) {
+    sendJson(req, res, 400, {
+      error: "No valid review rows were provided.",
+      invalid: invalid.slice(0, 30)
+    });
+    return;
+  }
+
+  await persistAiReviewStore();
+  const diagnostics = buildAiReviewDiagnostics();
+
+  sendJson(req, res, 200, {
+    ok: true,
+    savedCount: saved.length,
+    invalidCount: invalid.length,
+    totalReviewed: aiReviewStore.records.length,
+    updatedAt: aiReviewStore.lastSyncAt,
+    promptLearning: {
+      activeRules: diagnostics.learnedRules.length,
+      learnedRules: diagnostics.learnedRules
+    },
+    diagnostics,
+    missingDedupCount,
+    savedKeys: saved.slice(0, 200).map((item) => item.dedupAnnouncementKey),
+    invalid: invalid.slice(0, 30)
+  });
+}
+
 function matchSymbolFilter(item, exchange, symbolFilter) {
   if (!symbolFilter) {
     return true;
@@ -3382,7 +3839,7 @@ function matchSymbolFilter(item, exchange, symbolFilter) {
 }
 
 async function handleGetAnnouncements(req, res, requestUrl) {
-  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore()]);
+  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore(), loadAiReviewStore()]);
 
   const requestedLimit = Number.parseInt(requestUrl.searchParams.get("limit") ?? "100", 10);
   const limit = Math.min(Math.max(normalizePositiveInt(requestedLimit, 100), 1), 500);
@@ -3717,7 +4174,7 @@ async function handleWorkerHeartbeat(req, res) {
 }
 
 async function handleStatus(req, res) {
-  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore()]);
+  await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore(), loadAiReviewStore()]);
 
   const aiSuccessCount = aiLabelStore.records.filter(
     (record) => normalizeText(record?.criteriaVersion) === aiCriteriaVersion && normalizeText(record?.status) === "SUCCESS"
@@ -3725,6 +4182,7 @@ async function handleStatus(req, res) {
   const aiFailureCount = aiLabelStore.records.filter(
     (record) => normalizeText(record?.criteriaVersion) === aiCriteriaVersion && normalizeText(record?.status) === "FAILED"
   ).length;
+  const aiReviewDiagnostics = buildAiReviewDiagnostics();
 
   sendJson(req, res, 200, {
     service: appName,
@@ -3761,6 +4219,9 @@ async function handleStatus(req, res) {
     aiLabelsSuccessCount: aiSuccessCount,
     aiLabelsFailureCount: aiFailureCount,
     aiLabelsLastSyncAt: aiLabelStore.lastSyncAt,
+    aiReviewsCount: aiReviewStore.records.length,
+    aiReviewsLastSyncAt: aiReviewStore.lastSyncAt,
+    aiReviewDiagnostics,
     database: {
       enabled: isDatabaseEnabled(),
       ready: databaseReady,
@@ -3790,6 +4251,8 @@ const server = createServer(async (req, res) => {
           "GET /api/status",
           "GET/POST /api/notes",
           "GET /api/notifications/announcements?exchange=NSE|BSE|NSE+BSE|DEDUP|ALL&limit=100&symbol=TCS",
+          "GET /api/ai/categories",
+          "POST /api/ai/reviews/bulk",
           "POST /api/jobs/daily",
           "POST /api/jobs/ai-only"
         ]
@@ -3822,6 +4285,16 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (method === "GET" && requestUrl.pathname === "/api/ai/categories") {
+      await handleGetAiCategories(req, res);
+      return;
+    }
+
+    if (method === "POST" && requestUrl.pathname === "/api/ai/reviews/bulk") {
+      await handleBulkAiReviews(req, res);
+      return;
+    }
+
     if (method === "POST" && requestUrl.pathname === "/api/jobs/daily") {
       await handleCronRun(req, res);
       return;
@@ -3845,7 +4318,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore()])
+Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore(), loadAiReviewStore()])
   .catch((error) => {
     const message = error instanceof Error ? error.message : "Unknown error";
     log("Announcement stores warm-up failed", { message });

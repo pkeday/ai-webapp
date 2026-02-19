@@ -46,6 +46,9 @@ Production setup in this project:
 - `PDF_HASH_CONCURRENCY`: Parallel PDF hash workers during dedup rebuild (default: `4`).
 - `AI_CLASSIFIER_ENABLED`: Gate for AI classification (`true` to enable; default: `false`).
 - `AI_CRITERIA_VERSION`: Prompt/version tag used for idempotent reclassification (default: `v1`).
+- `AI_REVIEWS_STORAGE_FILE`: Path to reviewer corrections store (default: `data/announcement_ai_reviews.json`).
+- `AI_PROMPT_LEARNING_MIN_EXAMPLES`: Min reviewed mismatches needed before adding a learned prompt rule (default: `2`).
+- `AI_PROMPT_LEARNING_MAX_RULES`: Max learned prompt rules injected into classifier system prompt (default: `8`).
 - `AI_MAX_ITEMS_PER_CRON`: Max dedup announcements sent to models per cron run (default: `120`).
 - `AI_CLASSIFICATION_CONCURRENCY`: Parallel AI classification workers (default: `2`).
 - `AI_PDF_FETCH_TIMEOUT_MS`: Timeout for PDF download before classification (default: `30000`).
@@ -79,6 +82,8 @@ Production setup in this project:
 - `POST /api/jobs/ai-only` (optional secret in `x-cron-secret`)
 - `POST /api/internal/worker-heartbeat` (optional secret in `x-cron-secret`)
 - `GET /api/notifications/announcements?exchange=NSE|BSE|NSE+BSE|DEDUP|ALL&limit=100&symbol=TCS`
+- `GET /api/ai/categories`
+- `POST /api/ai/reviews/bulk` body `{ "reviews": [{ "dedupAnnouncementKey": "...", "reviewedLabel": "..." }] }`
 
 ## Notifications sync flow (NSE + BSE)
 
@@ -87,7 +92,8 @@ Production setup in this project:
 - BSE records are enriched with `isin` using BSE scrip master data (`ListofScripData` API) before storage.
 - New records are deduplicated per exchange and persisted to Postgres snapshot storage.
 - A separate combined union table (`exchange=NSE+BSE`) and dedup table (`exchange=DEDUP`) are persisted in Postgres and served via API.
-- If Postgres is unavailable, backend falls back to local JSON files (`NSE_STORAGE_FILE`, `BSE_STORAGE_FILE`, `COMBINED_STORAGE_FILE`, `DEDUP_STORAGE_FILE`, `AI_LABELS_STORAGE_FILE`).
+- If Postgres is unavailable, backend falls back to local JSON files (`NSE_STORAGE_FILE`, `BSE_STORAGE_FILE`, `COMBINED_STORAGE_FILE`, `DEDUP_STORAGE_FILE`, `AI_LABELS_STORAGE_FILE`, `AI_REVIEWS_STORAGE_FILE`).
 - If enabled, AI classification runs after dedup in the same cron run and stores per-announcement labels persistently.
+- Reviewed labels are stored separately and returned in Dedup API rows as `review_label`; reviewed mismatches are used to inject learned prompt guidance automatically in later AI runs.
 - For fast iteration/testing, `POST /api/jobs/ai-only` runs only AI classification over recent dedup announcements (no NSE/BSE refresh, no dedup rebuild).
 - Notifications data is served via `GET /api/notifications/announcements`.

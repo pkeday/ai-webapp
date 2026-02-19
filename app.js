@@ -10,6 +10,45 @@ const STORAGE_KEYS = {
 
 const defaultApiBase = "https://pkeday-ai-webapp-brokerage-api.onrender.com";
 const notificationsApiBaseFallback = "https://pkeday-ai-webapp-api.onrender.com";
+const fallbackAiCategories = [
+  "earnings_results_boardmeeting",
+  "results_intimation_date",
+  "earning_call_registration",
+  "earning_call_audio_recording",
+  "earning_call_transcript",
+  "analyst_meeting",
+  "participating_in_conference",
+  "investor_day",
+  "agm_announcement",
+  "board_meeting",
+  "board_meeting_intimation",
+  "press_release",
+  "auditors_report",
+  "annual_report",
+  "earning_presentation",
+  "ma",
+  "divestment",
+  "contract_awarded",
+  "fund_raising",
+  "change_in_management",
+  "credit_rating",
+  "trading_stopping",
+  "investor_conference",
+  "not_eligible",
+  "newspaper_announcement",
+  "agm_outcome",
+  "postal_ballot",
+  "esops",
+  "insider_trading",
+  "share_pledge",
+  "business_update",
+  "surveillance_reply",
+  "record_date_intimation",
+  "share_transfer_relodgement_report",
+  "certificate_under_regulation_74_5",
+  "non_applicability_regulation_27_2",
+  "others"
+];
 
 const defaultDictionary = [
   {
@@ -169,7 +208,11 @@ const state = {
     loading: false,
     error: "",
     lastSyncAt: null,
-    lastSyncStats: null
+    lastSyncStats: null,
+    aiCategories: [],
+    reviewQueue: {},
+    reviewSaving: false,
+    reviewFeedback: ""
   },
   priorityCompanies: loadList(STORAGE_KEYS.priority, ["Reliance Industries", "UltraTech Cement", "ICICI Bank"]),
   ignoredCompanies: loadList(STORAGE_KEYS.ignored, ["Adani Ports", "Vodafone Idea"]),
@@ -227,6 +270,10 @@ const refs = {
   notificationsSymbolInput: document.getElementById("notifications-symbol-input"),
   notificationsLimitSelect: document.getElementById("notifications-limit-select"),
   notificationsRefreshBtn: document.getElementById("notifications-refresh-btn"),
+  notificationsReviewPanel: document.getElementById("notifications-review-panel"),
+  notificationsReviewSummary: document.getElementById("notifications-review-summary"),
+  notificationsReviewSaveBtn: document.getElementById("notifications-review-save-btn"),
+  notificationsReviewFeedback: document.getElementById("notifications-review-feedback"),
   notificationsMeta: document.getElementById("notifications-meta"),
   notificationsTable: document.getElementById("notifications-table"),
   notificationsPrevBtn: document.getElementById("notifications-prev-btn"),
@@ -266,7 +313,7 @@ async function init() {
   hydrateCompanySelect();
   bindEvents();
   renderAll();
-  await Promise.allSettled([checkBackendStatus(), refreshAuthState(), fetchNotifications()]);
+  await Promise.allSettled([checkBackendStatus(), refreshAuthState(), fetchNotificationCategories(), fetchNotifications()]);
 }
 
 function bindEvents() {
@@ -459,6 +506,40 @@ function bindEvents() {
     state.notifications.page += 1;
     await fetchNotifications();
   });
+
+  if (refs.notificationsReviewSaveBtn) {
+    refs.notificationsReviewSaveBtn.addEventListener("click", async () => {
+      await saveQueuedNotificationReviews();
+    });
+  }
+
+  if (refs.notificationsTable) {
+    refs.notificationsTable.addEventListener("click", (event) => {
+      const submitButton = event.target.closest("button[data-review-submit]");
+      if (!submitButton) {
+        return;
+      }
+
+      const dedupAnnouncementKey = String(submitButton.dataset.reviewSubmit ?? "").trim();
+      if (!dedupAnnouncementKey) {
+        return;
+      }
+
+      const row = submitButton.closest("tr");
+      const select = row?.querySelector("select[data-review-select]");
+      const reviewedLabel = String(select?.value ?? "").trim();
+      if (!reviewedLabel) {
+        return;
+      }
+
+      state.notifications.reviewQueue[dedupAnnouncementKey] = {
+        reviewedLabel,
+        queuedAt: new Date().toISOString()
+      };
+      state.notifications.reviewFeedback = `Queued 1 row. Pending save: ${Object.keys(state.notifications.reviewQueue).length}.`;
+      renderNotifications();
+    });
+  }
 
   refs.archiveTable.addEventListener("click", async (event) => {
     const shareButton = event.target.closest("button[data-share-archive]");
@@ -974,6 +1055,25 @@ function renderNotifications() {
     refs.notificationsExchangeSelect.value = normalizedExchange;
   }
 
+  const isDedupView = String(state.notifications.exchange ?? "").toUpperCase() === "DEDUP";
+  const queuedReviewCount = Object.keys(state.notifications.reviewQueue || {}).length;
+
+  if (refs.notificationsReviewPanel) {
+    refs.notificationsReviewPanel.classList.toggle("hidden", !isDedupView);
+  }
+  if (refs.notificationsReviewSummary) {
+    refs.notificationsReviewSummary.textContent = isDedupView
+      ? `${queuedReviewCount} rows queued for save. Submit each row first, then Save reviewed labels.`
+      : "";
+  }
+  if (refs.notificationsReviewSaveBtn) {
+    refs.notificationsReviewSaveBtn.disabled = !isDedupView || queuedReviewCount === 0 || state.notifications.reviewSaving;
+    refs.notificationsReviewSaveBtn.textContent = state.notifications.reviewSaving ? "Saving..." : "Save reviewed labels";
+  }
+  if (refs.notificationsReviewFeedback) {
+    refs.notificationsReviewFeedback.textContent = isDedupView ? state.notifications.reviewFeedback || "" : "";
+  }
+
   const stats = state.notifications.lastSyncStats;
   const syncedLabel = state.notifications.lastSyncAt
     ? new Date(state.notifications.lastSyncAt).toLocaleString()
@@ -1017,6 +1117,10 @@ function renderNotifications() {
     if (Number.isFinite(stats.withPdfHashCount)) {
       details.push(`hashed: ${stats.withPdfHashCount}`);
     }
+
+    if (queuedReviewCount > 0) {
+      details.push(`queued reviews: ${queuedReviewCount}`);
+    }
   }
 
   refs.notificationsMeta.textContent = details.join(" | ");
@@ -1034,12 +1138,12 @@ function renderNotifications() {
   }
 
   if (state.notifications.loading) {
-    refs.notificationsTable.innerHTML = '<tr><td colspan="8"><div class="empty-state">Loading announcements...</div></td></tr>';
+    refs.notificationsTable.innerHTML = '<tr><td colspan="10"><div class="empty-state">Loading announcements...</div></td></tr>';
     return;
   }
 
   if (state.notifications.error) {
-    refs.notificationsTable.innerHTML = `<tr><td colspan="8"><div class="empty-state">Failed to load announcements: ${escapeHtml(
+    refs.notificationsTable.innerHTML = `<tr><td colspan="10"><div class="empty-state">Failed to load announcements: ${escapeHtml(
       state.notifications.error
     )}</div></td></tr>`;
     return;
@@ -1047,7 +1151,7 @@ function renderNotifications() {
 
   if (state.notifications.items.length === 0) {
     refs.notificationsTable.innerHTML =
-      '<tr><td colspan="8"><div class="empty-state">No announcements found for the selected filter.</div></td></tr>';
+      '<tr><td colspan="10"><div class="empty-state">No announcements found for the selected filter.</div></td></tr>';
     return;
   }
 
@@ -1071,6 +1175,8 @@ function renderNotifications() {
       let attachmentUrl = null;
       let aiLabel = "-";
       let aiNotes = "-";
+      let reviewColumn = "-";
+      let reviewActionColumn = "-";
 
       if (combinedView) {
         const sourceExchanges = Array.isArray(item.exchanges)
@@ -1107,7 +1213,8 @@ function renderNotifications() {
         if (normalizedExchange === "DEDUP") {
           if (aiStatus === "SUCCESS" && item.ai_label) {
             const confidence = Number(item.ai_confidence);
-            aiLabel = Number.isFinite(confidence) ? `${item.ai_label} (${Math.round(confidence * 100)}%)` : String(item.ai_label);
+            const aiLabelText = formatAiCategoryLabel(item.ai_label);
+            aiLabel = Number.isFinite(confidence) ? `${aiLabelText} (${Math.round(confidence * 100)}%)` : aiLabelText;
             aiNotes = item.ai_reason || "-";
           } else if (aiStatus === "FAILED") {
             aiLabel = "Failed";
@@ -1147,6 +1254,40 @@ function renderNotifications() {
       const aiNotesText = String(aiNotes || "-");
       const aiNotesDisplay = aiNotesText.length > 180 ? `${aiNotesText.slice(0, 177)}...` : aiNotesText;
 
+      if (isDedupView) {
+        const dedupAnnouncementKey = getDedupAnnouncementKey(item);
+        const queuedReview = state.notifications.reviewQueue[dedupAnnouncementKey];
+        const currentReviewLabel =
+          String(queuedReview?.reviewedLabel ?? item.review_label ?? (item.ai_status === "SUCCESS" ? item.ai_label : "") ?? "").trim();
+        const categoryOptions = getNotificationAiCategories()
+          .map((category) => {
+            const selected = currentReviewLabel === category ? ' selected="selected"' : "";
+            return `<option value="${escapeAttribute(category)}"${selected}>${escapeHtml(formatAiCategoryLabel(category))}</option>`;
+          })
+          .join("");
+        const selectDisabled = dedupAnnouncementKey ? "" : " disabled";
+        reviewColumn = dedupAnnouncementKey
+          ? `<select class="review-label-select" data-review-select${selectDisabled}>
+              <option value="">Select label</option>
+              ${categoryOptions}
+            </select>`
+          : "-";
+
+        if (dedupAnnouncementKey) {
+          const hasQueued = Boolean(queuedReview);
+          const submitDisabled = !currentReviewLabel || state.notifications.reviewSaving;
+          const statusText = hasQueued ? "Queued" : item.review_label ? "Saved" : "";
+          reviewActionColumn = `
+            <div class="review-row-actions">
+              <button class="btn" type="button" data-review-submit="${escapeAttribute(dedupAnnouncementKey)}"${
+                submitDisabled ? " disabled" : ""
+              }>${hasQueued ? "Queued" : "Submit row"}</button>
+              ${statusText ? `<span class="review-row-status">${escapeHtml(statusText)}</span>` : ""}
+            </div>
+          `;
+        }
+      }
+
       return `
         <tr>
           <td>${escapeHtml(timestampLabel)}</td>
@@ -1156,6 +1297,8 @@ function renderNotifications() {
           <td>${escapeHtml(type)}</td>
           <td>${escapeHtml(aiLabel)}</td>
           <td title="${escapeAttribute(aiNotesText)}">${escapeHtml(aiNotesDisplay)}</td>
+          <td>${reviewColumn}</td>
+          <td>${reviewActionColumn}</td>
           <td>${attachment}</td>
         </tr>
       `;
@@ -1495,6 +1638,142 @@ function fallbackSymbolMatch(item, exchange, symbol) {
   return nseSymbol === query || companyName.includes(query) || isin === query;
 }
 
+function getNotificationAiCategories() {
+  if (Array.isArray(state.notifications.aiCategories) && state.notifications.aiCategories.length > 0) {
+    return state.notifications.aiCategories;
+  }
+  return [...fallbackAiCategories];
+}
+
+function formatAiCategoryLabel(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return "-";
+  }
+
+  return normalized
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getDedupAnnouncementKey(item) {
+  const dedupAnnouncementKey = String(item?.dedupAnnouncementKey ?? item?.mergedAnnouncementKey ?? item?.announcementKey ?? "").trim();
+  return dedupAnnouncementKey || "";
+}
+
+async function fetchNotificationCategories() {
+  const normalizePayload = (payload) =>
+    Array.isArray(payload?.categories)
+      ? payload.categories
+          .map((item) => String(item?.value ?? item ?? "").trim())
+          .filter((value) => Boolean(value))
+      : [];
+
+  try {
+    const payload = await apiFetch("/api/ai/categories");
+    const categories = normalizePayload(payload);
+    state.notifications.aiCategories = categories.length > 0 ? categories : [...fallbackAiCategories];
+    return;
+  } catch {
+    // Fall through to fallback base or static categories.
+  }
+
+  const currentBase = getApiBase();
+  const fallbackBase = notificationsApiBaseFallback.replace(/\/$/, "");
+  if (currentBase !== fallbackBase) {
+    try {
+      const payload = await apiFetchFromBase("/api/ai/categories", fallbackBase, {});
+      const categories = normalizePayload(payload);
+      state.notifications.aiCategories = categories.length > 0 ? categories : [...fallbackAiCategories];
+      return;
+    } catch {
+      // Fall through to static categories.
+    }
+  }
+
+  state.notifications.aiCategories = [...fallbackAiCategories];
+}
+
+async function saveQueuedNotificationReviews() {
+  const queuedEntries = Object.entries(state.notifications.reviewQueue || {});
+  if (queuedEntries.length === 0) {
+    state.notifications.reviewFeedback = "No queued review labels to save.";
+    renderNotifications();
+    return;
+  }
+
+  state.notifications.reviewSaving = true;
+  renderNotifications();
+
+  try {
+    const reviews = queuedEntries.map(([dedupAnnouncementKey, payload]) => ({
+      dedupAnnouncementKey,
+      reviewedLabel: String(payload?.reviewedLabel ?? "").trim()
+    }));
+    const requestBody = JSON.stringify({ reviews });
+    let response = null;
+    let requestError = null;
+
+    try {
+      response = await apiFetch("/api/ai/reviews/bulk", {
+        method: "POST",
+        body: requestBody
+      });
+    } catch (error) {
+      requestError = error instanceof Error ? error : new Error("Unknown save error");
+    }
+
+    if (!response) {
+      const currentBase = getApiBase();
+      const fallbackBase = notificationsApiBaseFallback.replace(/\/$/, "");
+      if (currentBase !== fallbackBase) {
+        response = await apiFetchFromBase(
+          "/api/ai/reviews/bulk",
+          fallbackBase,
+          {
+            method: "POST",
+            body: requestBody
+          },
+          false
+        );
+      } else if (requestError) {
+        throw requestError;
+      }
+    }
+
+    if (!response) {
+      throw requestError || new Error("Failed to save reviewed labels");
+    }
+
+    for (const item of state.notifications.items) {
+      const dedupAnnouncementKey = getDedupAnnouncementKey(item);
+      const queued = state.notifications.reviewQueue[dedupAnnouncementKey];
+      if (!queued) {
+        continue;
+      }
+      item.review_label = queued.reviewedLabel;
+      item.reviewed_at = new Date().toISOString();
+    }
+
+    state.notifications.reviewQueue = {};
+    const savedCount = Number(response?.savedCount ?? queuedEntries.length);
+    const invalidCount = Number(response?.invalidCount ?? 0);
+    const diagnostics = response?.diagnostics && typeof response.diagnostics === "object" ? response.diagnostics : null;
+    const agreementRate = Number(diagnostics?.agreementRate);
+    const agreementText = Number.isFinite(agreementRate) ? ` Agreement: ${Math.round(agreementRate * 100)}%.` : "";
+    const learningRules = Array.isArray(response?.promptLearning?.learnedRules) ? response.promptLearning.learnedRules : [];
+    const learningText = learningRules.length > 0 ? ` Prompt rules active: ${learningRules.length}.` : "";
+    state.notifications.reviewFeedback = `Saved ${savedCount} reviewed labels.${invalidCount > 0 ? ` Invalid: ${invalidCount}.` : ""}${agreementText}${learningText}`;
+  } catch (error) {
+    state.notifications.reviewFeedback = `Failed to save reviewed labels: ${error.message}`;
+  } finally {
+    state.notifications.reviewSaving = false;
+    renderNotifications();
+  }
+}
+
 async function fetchNotifications() {
   const exchangeInput = String(refs.notificationsExchangeSelect?.value ?? "NSE").trim().toUpperCase();
   const exchange =
@@ -1505,6 +1784,9 @@ async function fetchNotifications() {
         : exchangeInput === "NSE+BSE" || exchangeInput === "BSE+NSE" || exchangeInput === "COMBINED"
           ? "NSE+BSE"
           : "NSE";
+  if (exchange === "DEDUP" && state.notifications.aiCategories.length === 0) {
+    await fetchNotificationCategories();
+  }
   const symbol = (refs.notificationsSymbolInput?.value ?? "").trim().toUpperCase();
   const limitInput = Number.parseInt(refs.notificationsLimitSelect?.value ?? "50", 10);
   const limit = Number.isFinite(limitInput) ? Math.max(1, Math.min(500, limitInput)) : 50;
