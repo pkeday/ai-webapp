@@ -260,7 +260,6 @@ const aiLabelStore = {
   byInputHash: new Map(),
   lastSyncAt: null
 };
-let dedupBootstrapInFlight = null;
 
 function getAllowedOrigin(originHeader) {
   if (corsOrigins.length === 0) {
@@ -2762,45 +2761,6 @@ function matchSymbolFilter(item, exchange, symbolFilter) {
   return symbol === query || companyName.includes(query) || isin === query;
 }
 
-async function ensureDedupAnnouncementsReady(trigger = "api-read") {
-  if (Array.isArray(stores.DEDUP.announcements) && stores.DEDUP.announcements.length > 0) {
-    return {
-      rebuilt: false,
-      reason: "already-ready",
-      totalStored: stores.DEDUP.announcements.length
-    };
-  }
-
-  const sourceCount =
-    stores.COMBINED.announcements.length + stores.NSE.announcements.length + stores.BSE.announcements.length;
-  if (sourceCount === 0) {
-    return {
-      rebuilt: false,
-      reason: "no-source-data",
-      totalStored: 0
-    };
-  }
-
-  if (dedupBootstrapInFlight) {
-    return dedupBootstrapInFlight;
-  }
-
-  dedupBootstrapInFlight = (async () => {
-    const stats = await refreshDedupAnnouncements(`${trigger}-bootstrap`, true);
-    return {
-      rebuilt: true,
-      totalStored: stores.DEDUP.announcements.length,
-      stats
-    };
-  })();
-
-  try {
-    return await dedupBootstrapInFlight;
-  } finally {
-    dedupBootstrapInFlight = null;
-  }
-}
-
 async function handleGetAnnouncements(req, res, requestUrl) {
   await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore()]);
 
@@ -2828,15 +2788,6 @@ async function handleGetAnnouncements(req, res, requestUrl) {
             exchangeQuery === "COMBINED"
           ? "NSE+BSE"
           : "NSE";
-
-  if (selectedExchange === "DEDUP") {
-    try {
-      await ensureDedupAnnouncementsReady("notifications-read");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown dedup bootstrap error";
-      log("Failed to bootstrap dedup announcements on read", { message });
-    }
-  }
 
   const sourceAnnouncements =
     selectedExchange === "ALL"
