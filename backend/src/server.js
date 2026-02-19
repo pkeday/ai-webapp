@@ -2683,20 +2683,6 @@ function requireCronSecret(req, res, failureMessage = "Invalid cron secret.") {
   return false;
 }
 
-function serializeSettledResult(settledResult) {
-  if (!settledResult || typeof settledResult !== "object") {
-    return null;
-  }
-
-  if (settledResult.status === "fulfilled") {
-    return settledResult.value;
-  }
-
-  return {
-    error: settledResult.reason instanceof Error ? settledResult.reason.message : "Unknown error"
-  };
-}
-
 function handleHealth(req, res) {
   sendJson(req, res, 200, {
     ok: true,
