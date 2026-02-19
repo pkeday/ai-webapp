@@ -61,6 +61,15 @@ body {
   margin-top: 0;
 }
 
+#api-status {
+  margin: 0.6rem 0;
+  color: var(--muted);
+}
+
+#api-form {
+  margin: 0.8rem 0 0.4rem;
+}
+
 .row {
   display: flex;
   gap: 0.5rem;

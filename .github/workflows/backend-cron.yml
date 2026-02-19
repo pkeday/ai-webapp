@@ -1,0 +1,32 @@
+name: Trigger backend scheduled job
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run-cron-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger backend /api/jobs/daily
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${API_BASE_URL}" ] || [ -z "${CRON_SECRET}" ]; then
+            echo "Missing required secrets: API_BASE_URL or CRON_SECRET"
+            exit 1
+          fi
+
+          echo "Triggering backend job at ${API_BASE_URL}/api/jobs/daily"
+
+          curl --fail-with-body --show-error --silent \
+            -X POST "${API_BASE_URL}/api/jobs/daily" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${CRON_SECRET}" \
+            -d '{"trigger":"github-actions-cron"}'
+
+          echo "Cron trigger completed"

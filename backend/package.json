@@ -1,0 +1,16 @@
+{
+  "name": "ai-webapp-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend + worker + cron foundation for ai-webapp",
+  "scripts": {
+    "start": "node src/server.js",
+    "worker": "node src/worker.js",
+    "cron": "node src/cron.js",
+    "check": "node --check src/server.js && node --check src/worker.js && node --check src/cron.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

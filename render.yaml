@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: pkeday-ai-webapp-api
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: APP_NAME
+        value: ai-webapp-api
+      - key: APP_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: https://pkeday.github.io
+      - key: CRON_SECRET
+        generateValue: true

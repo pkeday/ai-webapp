@@ -1,76 +1,96 @@
-# AI Web App Starter (Noob Friendly)
+# AI Web App Starter (Frontend + Backend + Scheduled Jobs)
 
-This project gives you a full beginner workflow:
-- Build locally with AI agents.
-- Test on phone/tablet on the same Wi-Fi.
-- Push to GitHub.
-- Auto-deploy live via GitHub Pages.
+This project includes:
+- Static frontend (GitHub Pages)
+- Node API backend (`backend/src/server.js`)
+- Scheduled job script (`backend/src/cron.js`)
+- Render config (`render.yaml`) for backend hosting
+- GitHub Actions schedule for cron triggering
+
+## Current live frontend
+
+`https://pkeday.github.io/ai-webapp/`
+
+## Current backend URL
+
+`https://pkeday-ai-webapp-api.onrender.com`
 
 ## 1) Run locally
 
-From terminal:
+Frontend:
 
 ```bash
 cd /Users/parikshitkabra/Projects/codex_projects/ai-webapp
-chmod +x scripts/run-local.sh
 ./scripts/run-local.sh
 ```
 
-Open the URL shown in terminal:
-- Laptop: `http://localhost:5173`
-- Other device (same Wi-Fi): `http://YOUR_LOCAL_IP:5173`
-
-## 2) Create a GitHub repo and push code
-
-This project is already initialized as a local git repo with an initial commit.
-Create an empty repo on GitHub (no README/license), then run:
+Backend API:
 
 ```bash
 cd /Users/parikshitkabra/Projects/codex_projects/ai-webapp
-./scripts/connect-github.sh https://github.com/YOUR_USERNAME/YOUR_REPO.git
+./scripts/run-backend-local.sh
 ```
 
-If you prefer manual commands:
+Local URLs:
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:10000`
 
-```bash
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
-git push -u origin main
-```
+## 2) Backend hosting (Render)
 
-## 3) Live URL (already configured)
+Render web service:
+- Name: `pkeday-ai-webapp-api`
+- URL: `https://pkeday-ai-webapp-api.onrender.com`
+- Root dir: `backend`
+- Build command: `npm install --omit=dev`
+- Start command: `npm start`
+- Plan: `free`
 
-Your site is live at:
+The config source is:
+`/Users/parikshitkabra/Projects/codex_projects/ai-webapp/render.yaml`
+
+## 3) Cron hosting (GitHub Actions)
+
+Scheduled trigger workflow:
+`/Users/parikshitkabra/Projects/codex_projects/ai-webapp/.github/workflows/backend-cron.yml`
+
+Schedule:
+- Every 15 minutes (`*/15 * * * *`)
+
+It calls:
+- `POST /api/jobs/daily` on your backend with a secret header.
+
+Required GitHub repository secrets:
+- `API_BASE_URL`
+- `CRON_SECRET`
+
+## 4) Set backend URL in the frontend UI
+
+After backend deploys, open:
 `https://pkeday.github.io/ai-webapp/`
 
-## 4) Update site after changes
+In the Status card:
+1. Paste backend URL (for example: `https://pkeday-ai-webapp-api.onrender.com`)
+2. Click `Save + Test`
 
-Whenever you edit files with AI and want to publish:
+The value is saved in browser local storage per device.
 
-```bash
-git add .
-git commit -m "Describe update"
-git push
-```
-
-GitHub Pages auto-updates the site after each push to `main`.
-
-Optional helper (already included in this project):
+## 5) Publish future updates
 
 ```bash
+cd /Users/parikshitkabra/Projects/codex_projects/ai-webapp
 ./scripts/publish.sh "Describe update"
 ```
 
-## 5) How to work with AI agents
+## 6) Files you will use most
 
-Use prompts like:
-- "Add a pricing section with 3 cards and animations."
-- "Create a login form UI only (no backend)."
-- "Refactor CSS to be mobile-first and cleaner."
-- "Add a contact form that saves to localStorage."
+- Frontend: `/Users/parikshitkabra/Projects/codex_projects/ai-webapp/index.html`
+- Frontend JS: `/Users/parikshitkabra/Projects/codex_projects/ai-webapp/app.js`
+- Backend API: `/Users/parikshitkabra/Projects/codex_projects/ai-webapp/backend/src/server.js`
+- Cron job: `/Users/parikshitkabra/Projects/codex_projects/ai-webapp/backend/src/cron.js`
+- Cron workflow: `/Users/parikshitkabra/Projects/codex_projects/ai-webapp/.github/workflows/backend-cron.yml`
+- Render config: `/Users/parikshitkabra/Projects/codex_projects/ai-webapp/render.yaml`
 
 ## Notes
 
-- This starter is plain HTML/CSS/JS, so no npm install is needed.
-- If you later want React/Next.js, we can upgrade this project when npm/network access is available.
-- You only need a custom domain later if you want your own URL. GitHub Pages URL works now.
+- Custom domain is optional and can be connected later.
+- We can add more scheduled workflows as your app grows.

@@ -16,6 +16,20 @@
       <section class="card">
         <h2>Status</h2>
         <p id="status">Loading...</p>
+        <p id="api-status">API status: Not checked yet</p>
+        <form id="api-form">
+          <label for="api-base-input">Backend API URL</label>
+          <div class="row">
+            <input
+              id="api-base-input"
+              name="apiBase"
+              type="url"
+              placeholder="https://your-backend.onrender.com"
+              required
+            />
+            <button type="submit">Save + Test</button>
+          </div>
+        </form>
       </section>
 
       <section class="card">
