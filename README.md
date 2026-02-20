@@ -88,6 +88,18 @@ Required GitHub repository secrets:
 - `API_BASE_URL`
 - `CRON_SECRET`
 
+Brokerage scheduler workflow:
+`/Users/parikshitkabra/Projects/codex_projects/ai-webapp/.github/workflows/brokerage-cron.yml`
+
+Brokerage scheduler behavior:
+- Runs every 15 minutes
+- Calls brokerage backend `POST /api/jobs/daily`
+- Brokerage backend checks each user-configured local schedule/timezone and ingests only new emails (cursor-based)
+
+Required GitHub repository secrets for brokerage workflow:
+- `BROKERAGE_API_BASE_URL` (for example `https://pkeday-ai-webapp-brokerage-api.onrender.com`)
+- `BROKERAGE_CRON_SECRET` (must match `CRON_SECRET` env var on brokerage Render service)
+
 ## 4) Set backend URL in the frontend UI
 
 After backend deploys, open:

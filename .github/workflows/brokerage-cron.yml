@@ -1,0 +1,59 @@
+name: Trigger brokerage ingest scheduler
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run-brokerage-cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger brokerage /api/jobs/daily
+        env:
+          BROKERAGE_API_BASE_URL: ${{ secrets.BROKERAGE_API_BASE_URL }}
+          BROKERAGE_CRON_SECRET: ${{ secrets.BROKERAGE_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BROKERAGE_API_BASE_URL}" ] || [ -z "${BROKERAGE_CRON_SECRET}" ]; then
+            echo "Missing required secrets: BROKERAGE_API_BASE_URL or BROKERAGE_CRON_SECRET"
+            exit 1
+          fi
+
+          PAYLOAD="$(jq -n --arg trigger "github-actions-brokerage-cron" '{trigger:$trigger}')"
+          RESPONSE_FILE="$(mktemp)"
+
+          HTTP_CODE="$(
+            curl --show-error --silent \
+              -o "${RESPONSE_FILE}" \
+              -w "%{http_code}" \
+              -X POST "${BROKERAGE_API_BASE_URL}/api/jobs/daily" \
+              -H "Content-Type: application/json" \
+              -H "x-cron-secret: ${BROKERAGE_CRON_SECRET}" \
+              -d "${PAYLOAD}"
+          )"
+
+          echo "Brokerage cron response code: ${HTTP_CODE}"
+
+          if jq -e . "${RESPONSE_FILE}" >/dev/null 2>&1; then
+            jq '{
+              ok,
+              runCount,
+              lastCronRunAt,
+              scheduleSummary: {
+                trigger: .scheduleSummary.trigger,
+                dueUsers: .scheduleSummary.dueUsers,
+                successfulRuns: .scheduleSummary.successfulRuns,
+                failedRuns: .scheduleSummary.failedRuns,
+                archivedCount: .scheduleSummary.archivedCount
+              }
+            }' "${RESPONSE_FILE}"
+          else
+            cat "${RESPONSE_FILE}"
+          fi
+
+          if [ "${HTTP_CODE}" -lt 200 ] || [ "${HTTP_CODE}" -ge 300 ]; then
+            echo "Brokerage cron trigger failed with HTTP ${HTTP_CODE}"
+            exit 1
+          fi

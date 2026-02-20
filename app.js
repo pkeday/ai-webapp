@@ -187,7 +187,22 @@ const state = {
     token: loadString(STORAGE_KEYS.authToken, ""),
     user: null,
     gmailConnected: false,
+    ingestionPreferences: null,
     loading: false
+  },
+  ingestSetup: {
+    open: false,
+    loading: false,
+    saving: false,
+    labels: [],
+    selectedLabelIds: [],
+    query: "",
+    maxResults: 30,
+    scheduleEnabled: true,
+    scheduleTime: "07:30",
+    scheduleTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata",
+    startFromNow: true,
+    statusMessage: ""
   },
   archives: {
     items: [],
@@ -213,8 +228,8 @@ const state = {
     lastSyncAt: null,
     lastSyncStats: null,
     aiCategories: [],
-    reviewQueue: {},
     reviewSaving: false,
+    reviewSavingKey: "",
     reviewFeedback: "",
     suggestionSaving: false,
     suggestionFeedback: "",
@@ -260,8 +275,23 @@ const refs = {
   },
   googleConnectBtn: document.getElementById("google-connect-btn"),
   signoutBtn: document.getElementById("signout-btn"),
+  ingestSetupBtn: document.getElementById("ingest-setup-btn"),
   runIngestBtn: document.getElementById("run-ingest-btn"),
   sendDigestBtn: document.getElementById("send-digest-btn"),
+  ingestSetupModal: document.getElementById("ingest-setup-modal"),
+  ingestSetupCloseBtn: document.getElementById("ingest-setup-close-btn"),
+  ingestSetupCancelBtn: document.getElementById("ingest-setup-cancel-btn"),
+  ingestSetupSaveBtn: document.getElementById("ingest-setup-save-btn"),
+  ingestSetupRefreshLabelsBtn: document.getElementById("ingest-setup-refresh-labels-btn"),
+  ingestSetupSelectAllBtn: document.getElementById("ingest-setup-select-all-btn"),
+  ingestSetupClearAllBtn: document.getElementById("ingest-setup-clear-all-btn"),
+  ingestSetupQuery: document.getElementById("ingest-setup-query"),
+  ingestSetupMaxResults: document.getElementById("ingest-setup-max-results"),
+  ingestSetupTime: document.getElementById("ingest-setup-time"),
+  ingestSetupTimezone: document.getElementById("ingest-setup-timezone"),
+  ingestSetupStartNow: document.getElementById("ingest-setup-start-now"),
+  ingestSetupLabels: document.getElementById("ingest-setup-labels"),
+  ingestSetupStatus: document.getElementById("ingest-setup-status"),
   filterBroker: document.getElementById("filter-broker"),
   filterType: document.getElementById("filter-type"),
   filterSearch: document.getElementById("filter-search"),
@@ -282,9 +312,6 @@ const refs = {
   notificationsAiLabelFilter: document.getElementById("notifications-ai-label-filter"),
   notificationsLimitSelect: document.getElementById("notifications-limit-select"),
   notificationsRefreshBtn: document.getElementById("notifications-refresh-btn"),
-  notificationsReviewPanel: document.getElementById("notifications-review-panel"),
-  notificationsReviewSummary: document.getElementById("notifications-review-summary"),
-  notificationsReviewSaveBtn: document.getElementById("notifications-review-save-btn"),
   notificationsReviewFeedback: document.getElementById("notifications-review-feedback"),
   notificationsSuggestionPanel: document.getElementById("notifications-suggestion-panel"),
   notificationsSuggestionMeta: document.getElementById("notifications-suggestion-meta"),
@@ -363,13 +390,6 @@ function bindEvents() {
 
       if (state.section === "notifications" && state.notifications.items.length === 0 && !state.notifications.loading) {
         void fetchNotifications();
-      } else if (
-        state.section === "notifications" &&
-        String(state.notifications.exchange || "").toUpperCase() === "DEDUP" &&
-        !state.notifications.suggestionsLoaded &&
-        !state.notifications.suggestionsLoading
-      ) {
-        void fetchNotificationSuggestions();
       }
     });
   }
@@ -394,6 +414,55 @@ function bindEvents() {
     await signOut();
   });
 
+  refs.ingestSetupBtn.addEventListener("click", async () => {
+    await openIngestSetupModal();
+  });
+
+  const closeIngestSetup = () => {
+    closeIngestSetupModal();
+  };
+
+  refs.ingestSetupCloseBtn.addEventListener("click", closeIngestSetup);
+  refs.ingestSetupCancelBtn.addEventListener("click", closeIngestSetup);
+  refs.ingestSetupModal.addEventListener("click", (event) => {
+    if (event.target instanceof HTMLElement && event.target.hasAttribute("data-ingest-close")) {
+      closeIngestSetup();
+    }
+  });
+  refs.ingestSetupRefreshLabelsBtn.addEventListener("click", async () => {
+    await refreshIngestSetupLabelsOnly();
+  });
+  refs.ingestSetupSelectAllBtn.addEventListener("click", () => {
+    state.ingestSetup.selectedLabelIds = state.ingestSetup.labels.map((label) => label.id);
+    renderIngestSetupModal();
+  });
+  refs.ingestSetupClearAllBtn.addEventListener("click", () => {
+    state.ingestSetup.selectedLabelIds = [];
+    renderIngestSetupModal();
+  });
+  refs.ingestSetupSaveBtn.addEventListener("click", async () => {
+    await saveIngestSetup();
+  });
+  refs.ingestSetupLabels.addEventListener("change", (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
+      return;
+    }
+
+    const labelId = String(input.dataset.labelId ?? "").trim();
+    if (!labelId) {
+      return;
+    }
+
+    if (input.checked) {
+      if (!state.ingestSetup.selectedLabelIds.includes(labelId)) {
+        state.ingestSetup.selectedLabelIds.push(labelId);
+      }
+    } else {
+      state.ingestSetup.selectedLabelIds = state.ingestSetup.selectedLabelIds.filter((value) => value !== labelId);
+    }
+  });
+
   refs.runIngestBtn.addEventListener("click", async () => {
     if (!state.auth.token) {
       setPipelineMessage("Sign in with Google before running ingest.");
@@ -407,14 +476,13 @@ function bindEvents() {
       const response = await apiFetch("/api/gmail/ingest", {
         method: "POST",
         body: JSON.stringify({
-          maxResults: 30,
           includeAttachments: true
         })
       });
 
       const summary = response.summary;
       setPipelineMessage(
-        `Ingest complete: archived ${summary.archivedCount}, skipped ${summary.skippedCount}, attachments ${summary.attachmentCount}.`
+        `Ingest complete: archived ${summary.archivedCount}, skipped ${summary.skippedCount}, labels ${summary.trackedLabels?.length || 0}.`
       );
       await fetchArchives();
       renderAllDataViews();
@@ -548,51 +616,28 @@ function bindEvents() {
     await fetchNotifications();
   });
 
-  if (refs.notificationsReviewSaveBtn) {
-    refs.notificationsReviewSaveBtn.addEventListener("click", async () => {
-      await saveQueuedNotificationReviews();
-    });
-  }
-
   if (refs.notificationsTable) {
-    refs.notificationsTable.addEventListener("click", (event) => {
-      const contextButton = event.target.closest("button[data-suggestion-context]");
-      if (contextButton) {
-        const dedupAnnouncementKey = String(contextButton.dataset.suggestionContext ?? "").trim();
-        if (dedupAnnouncementKey) {
-          const rowItem = state.notifications.items.find((item) => getDedupAnnouncementKey(item) === dedupAnnouncementKey);
-          if (rowItem) {
-            setNotificationSuggestionContext(rowItem);
-            state.notifications.suggestionFeedback = `Linked context to ${rowItem.symbol || rowItem.company || dedupAnnouncementKey}.`;
-            renderNotifications();
-          }
-        }
+    refs.notificationsTable.addEventListener("click", async (event) => {
+      const saveButton = event.target.closest("button[data-review-save]");
+      if (!saveButton) {
         return;
       }
 
-      const submitButton = event.target.closest("button[data-review-submit]");
-      if (!submitButton) {
-        return;
-      }
-
-      const dedupAnnouncementKey = String(submitButton.dataset.reviewSubmit ?? "").trim();
+      const dedupAnnouncementKey = String(saveButton.dataset.reviewSave ?? "").trim();
       if (!dedupAnnouncementKey) {
         return;
       }
 
-      const row = submitButton.closest("tr");
+      const row = saveButton.closest("tr");
       const select = row?.querySelector("select[data-review-select]");
       const reviewedLabel = String(select?.value ?? "").trim();
       if (!reviewedLabel) {
+        state.notifications.reviewFeedback = "Select the correct label before saving.";
+        renderNotifications();
         return;
       }
 
-      state.notifications.reviewQueue[dedupAnnouncementKey] = {
-        reviewedLabel,
-        queuedAt: new Date().toISOString()
-      };
-      state.notifications.reviewFeedback = `Queued 1 row. Pending save: ${Object.keys(state.notifications.reviewQueue).length}.`;
-      renderNotifications();
+      await saveNotificationReview(dedupAnnouncementKey, reviewedLabel);
     });
   }
 
@@ -743,6 +788,7 @@ function bindEvents() {
 function renderAll() {
   renderViewState();
   renderAuthUi();
+  renderIngestSetupModal();
   renderAllDataViews();
 }
 
@@ -774,6 +820,7 @@ function renderViewState() {
   }
 
   const brokerageActionOnly = state.section === "brokerage";
+  refs.ingestSetupBtn.classList.toggle("hidden", !brokerageActionOnly);
   refs.runIngestBtn.classList.toggle("hidden", !brokerageActionOnly);
   refs.sendDigestBtn.classList.toggle("hidden", !brokerageActionOnly);
 
@@ -789,6 +836,7 @@ function renderAuthUi() {
     refs.authStatus.textContent = "Auth status: not signed in";
     refs.googleConnectBtn.textContent = "Sign in with Google";
     refs.signoutBtn.classList.add("hidden");
+    refs.ingestSetupBtn.disabled = true;
     refs.runIngestBtn.disabled = true;
     return;
   }
@@ -797,7 +845,8 @@ function renderAuthUi() {
   refs.authStatus.textContent = `Auth status: ${state.auth.user.email} (${gmailPart})`;
   refs.googleConnectBtn.textContent = state.auth.gmailConnected ? "Reconnect Google" : "Connect Gmail";
   refs.signoutBtn.classList.remove("hidden");
-  refs.runIngestBtn.disabled = false;
+  refs.ingestSetupBtn.disabled = !state.auth.gmailConnected;
+  refs.runIngestBtn.disabled = !state.auth.gmailConnected;
 }
 
 function renderDashboard() {
@@ -1155,75 +1204,9 @@ function renderNotifications() {
     refs.notificationsAiLabelFilter.disabled = !isDedupView;
   }
 
-  const queuedReviewCount = Object.keys(state.notifications.reviewQueue || {}).length;
-
-  if (refs.notificationsReviewPanel) {
-    refs.notificationsReviewPanel.classList.toggle("hidden", !isDedupView);
-  }
-  if (refs.notificationsReviewSummary) {
-    refs.notificationsReviewSummary.textContent = isDedupView
-      ? `${queuedReviewCount} rows queued for save. Submit each row first, then Save reviewed labels.`
-      : "";
-  }
-  if (refs.notificationsReviewSaveBtn) {
-    refs.notificationsReviewSaveBtn.disabled = !isDedupView || queuedReviewCount === 0 || state.notifications.reviewSaving;
-    refs.notificationsReviewSaveBtn.textContent = state.notifications.reviewSaving ? "Saving..." : "Save reviewed labels";
-  }
   if (refs.notificationsReviewFeedback) {
-    refs.notificationsReviewFeedback.textContent = isDedupView ? state.notifications.reviewFeedback || "" : "";
-  }
-  if (refs.notificationsSuggestionPanel) {
-    refs.notificationsSuggestionPanel.classList.toggle("hidden", !isDedupView);
-  }
-  if (refs.notificationsSuggestionSubmitBtn) {
-    refs.notificationsSuggestionSubmitBtn.disabled = !isDedupView || state.notifications.suggestionSaving;
-    refs.notificationsSuggestionSubmitBtn.textContent = state.notifications.suggestionSaving ? "Submitting..." : "Submit suggestion";
-  }
-  if (refs.notificationsSuggestionClearContextBtn) {
-    refs.notificationsSuggestionClearContextBtn.disabled = !isDedupView || !state.notifications.suggestionContext;
-  }
-  if (refs.notificationsSuggestionMeta) {
-    const context = state.notifications.suggestionContext;
-    refs.notificationsSuggestionMeta.textContent = context
-      ? `Context: ${context.symbol || "-"} | ${context.company || "-"} | key ${context.dedupAnnouncementKey}`
-      : "No context selected";
-  }
-  if (refs.notificationsSuggestionFeedback) {
-    const suggestionMessage = isDedupView ? state.notifications.suggestionFeedback || "" : "";
-    refs.notificationsSuggestionFeedback.textContent = suggestionMessage;
-    refs.notificationsSuggestionFeedback.classList.toggle("hidden", !suggestionMessage);
-  }
-  if (refs.notificationsSuggestionList) {
-    if (!isDedupView) {
-      refs.notificationsSuggestionList.innerHTML = "";
-    } else if (state.notifications.suggestionsLoading) {
-      refs.notificationsSuggestionList.innerHTML = '<div class="empty-state">Loading suggestion history...</div>';
-    } else if (state.notifications.suggestionsError) {
-      refs.notificationsSuggestionList.innerHTML = `<div class="empty-state">Failed to load suggestions: ${escapeHtml(
-        state.notifications.suggestionsError
-      )}</div>`;
-    } else if (!Array.isArray(state.notifications.suggestions) || state.notifications.suggestions.length === 0) {
-      refs.notificationsSuggestionList.innerHTML = '<div class="empty-state">No suggestion history yet.</div>';
-    } else {
-      refs.notificationsSuggestionList.innerHTML = state.notifications.suggestions
-        .slice(0, 8)
-        .map((entry) => {
-          const category = formatAiCategoryLabel(entry?.suggestedCategory || "-");
-          const createdAt = formatNotificationTimestamp(entry?.createdAt || "");
-          const status = String(entry?.status || "OPEN").trim() || "OPEN";
-          const comment = String(entry?.comment || "").trim();
-          return `
-            <div class="suggestion-entry">
-              <div class="suggestion-entry-head">
-                <strong>${escapeHtml(category)}</strong>
-                <span>${escapeHtml(status)} | ${escapeHtml(createdAt)}</span>
-              </div>
-              <p>${escapeHtml(comment || "-")}</p>
-            </div>
-          `;
-        })
-        .join("");
-    }
+    const defaultMessage = "Select the correct label for a row, then click Save.";
+    refs.notificationsReviewFeedback.textContent = isDedupView ? state.notifications.reviewFeedback || defaultMessage : "";
   }
 
   const stats = state.notifications.lastSyncStats;
@@ -1277,9 +1260,6 @@ function renderNotifications() {
       details.push(`hashed: ${stats.withPdfHashCount}`);
     }
 
-    if (queuedReviewCount > 0) {
-      details.push(`queued reviews: ${queuedReviewCount}`);
-    }
   }
 
   refs.notificationsMeta.textContent = details.join(" | ");
@@ -1415,9 +1395,8 @@ function renderNotifications() {
 
       if (isDedupView) {
         const dedupAnnouncementKey = getDedupAnnouncementKey(item);
-        const queuedReview = state.notifications.reviewQueue[dedupAnnouncementKey];
         const currentReviewLabel =
-          String(queuedReview?.reviewedLabel ?? item.review_label ?? (item.ai_status === "SUCCESS" ? item.ai_label : "") ?? "").trim();
+          String(item.review_label ?? (item.ai_status === "SUCCESS" ? item.ai_label : "") ?? "").trim();
         const categoryOptions = getNotificationAiCategories()
           .map((category) => {
             const selected = currentReviewLabel === category ? ' selected="selected"' : "";
@@ -1433,15 +1412,14 @@ function renderNotifications() {
           : "-";
 
         if (dedupAnnouncementKey) {
-          const hasQueued = Boolean(queuedReview);
-          const submitDisabled = !currentReviewLabel || state.notifications.reviewSaving;
-          const statusText = hasQueued ? "Queued" : item.review_label ? "Saved" : "";
+          const submitDisabled = state.notifications.reviewSaving;
+          const isSavingRow = state.notifications.reviewSaving && state.notifications.reviewSavingKey === dedupAnnouncementKey;
+          const statusText = item.review_label ? "Saved" : "";
           reviewActionColumn = `
             <div class="review-row-actions">
-              <button class="btn" type="button" data-review-submit="${escapeAttribute(dedupAnnouncementKey)}"${
+              <button class="btn" type="button" data-review-save="${escapeAttribute(dedupAnnouncementKey)}"${
                 submitDisabled ? " disabled" : ""
-              }>${hasQueued ? "Queued" : "Submit row"}</button>
-              <button class="btn" type="button" data-suggestion-context="${escapeAttribute(dedupAnnouncementKey)}">Use for suggestion</button>
+              }>${isSavingRow ? "Saving..." : "Save"}</button>
               ${statusText ? `<span class="review-row-status">${escapeHtml(statusText)}</span>` : ""}
             </div>
           `;
@@ -1583,11 +1561,190 @@ async function checkBackendStatus() {
   }
 }
 
+function parseScheduleTime(value) {
+  const match = String(value || "").match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return { hour: 7, minute: 30 };
+  }
+
+  const hour = Math.max(0, Math.min(23, Number.parseInt(match[1], 10)));
+  const minute = Math.max(0, Math.min(59, Number.parseInt(match[2], 10)));
+  return { hour, minute };
+}
+
+function formatScheduleTime(hour, minute) {
+  const safeHour = Math.max(0, Math.min(23, Number.parseInt(String(hour ?? 0), 10) || 0));
+  const safeMinute = Math.max(0, Math.min(59, Number.parseInt(String(minute ?? 0), 10) || 0));
+  return `${String(safeHour).padStart(2, "0")}:${String(safeMinute).padStart(2, "0")}`;
+}
+
+function closeIngestSetupModal() {
+  state.ingestSetup.open = false;
+  renderIngestSetupModal();
+}
+
+async function loadIngestSetupData(fetchLabels = true) {
+  const prefs = await apiFetch("/api/gmail/preferences");
+  const labelsPayload = fetchLabels ? await apiFetch("/api/gmail/labels") : { labels: state.ingestSetup.labels };
+  const labels = Array.isArray(labelsPayload.labels) ? labelsPayload.labels : [];
+  const trackedIds = Array.isArray(prefs.trackedLabelIds) ? prefs.trackedLabelIds : [];
+
+  state.ingestSetup.labels = labels;
+  state.ingestSetup.selectedLabelIds = labels
+    .map((label) => label.id)
+    .filter((id) => trackedIds.includes(id));
+  state.ingestSetup.query = String(prefs.query || "");
+  state.ingestSetup.maxResults = Number(prefs.maxResults || 30);
+  state.ingestSetup.scheduleEnabled = prefs.scheduleEnabled !== false;
+  state.ingestSetup.scheduleTime = formatScheduleTime(prefs.scheduleHour, prefs.scheduleMinute);
+  state.ingestSetup.scheduleTimezone = String(
+    prefs.scheduleTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata"
+  );
+  state.ingestSetup.startFromNow = false;
+  state.ingestSetup.statusMessage = `Loaded ${labels.length} labels. ${trackedIds.length} currently tracked.`;
+}
+
+function renderIngestSetupModal() {
+  const isOpen = state.ingestSetup.open;
+  refs.ingestSetupModal.classList.toggle("hidden", !isOpen);
+  if (!isOpen) {
+    return;
+  }
+
+  refs.ingestSetupQuery.value = state.ingestSetup.query;
+  refs.ingestSetupMaxResults.value = String(state.ingestSetup.maxResults || 30);
+  refs.ingestSetupTime.value = state.ingestSetup.scheduleTime || "07:30";
+  refs.ingestSetupTimezone.value = state.ingestSetup.scheduleTimezone || "Asia/Kolkata";
+  refs.ingestSetupStartNow.checked = state.ingestSetup.startFromNow;
+  refs.ingestSetupSaveBtn.disabled = state.ingestSetup.saving || state.ingestSetup.loading;
+  refs.ingestSetupRefreshLabelsBtn.disabled = state.ingestSetup.saving || state.ingestSetup.loading;
+
+  if (state.ingestSetup.loading) {
+    refs.ingestSetupLabels.innerHTML = '<div class="note">Loading labels...</div>';
+  } else if (state.ingestSetup.labels.length === 0) {
+    refs.ingestSetupLabels.innerHTML = '<div class="note">No labels found yet. Use "Refresh labels".</div>';
+  } else {
+    refs.ingestSetupLabels.innerHTML = state.ingestSetup.labels
+      .map((label) => {
+        const checked = state.ingestSetup.selectedLabelIds.includes(label.id) ? "checked" : "";
+        const count = Number(label.messagesTotal || 0);
+        return `
+          <label class="ingest-label-item">
+            <span class="left">
+              <input type="checkbox" data-label-id="${escapeAttribute(label.id)}" ${checked} />
+              <span>${escapeHtml(label.name)}</span>
+            </span>
+            <span class="meta">${escapeHtml(label.type)} · ${count} msgs</span>
+          </label>
+        `;
+      })
+      .join("");
+  }
+
+  refs.ingestSetupStatus.textContent = state.ingestSetup.statusMessage || "";
+}
+
+async function openIngestSetupModal() {
+  if (!state.auth.token) {
+    setPipelineMessage("Sign in with Google before configuring ingest.");
+    return;
+  }
+
+  state.ingestSetup.open = true;
+  state.ingestSetup.loading = true;
+  state.ingestSetup.statusMessage = "Loading Gmail labels and ingest preferences...";
+  renderIngestSetupModal();
+
+  try {
+    await loadIngestSetupData(true);
+  } catch (error) {
+    state.ingestSetup.statusMessage = `Failed to load setup: ${error.message}`;
+  } finally {
+    state.ingestSetup.loading = false;
+    renderIngestSetupModal();
+  }
+}
+
+async function refreshIngestSetupLabelsOnly() {
+  if (!state.auth.token) {
+    return;
+  }
+  state.ingestSetup.loading = true;
+  state.ingestSetup.statusMessage = "Refreshing labels...";
+  renderIngestSetupModal();
+
+  try {
+    await loadIngestSetupData(true);
+  } catch (error) {
+    state.ingestSetup.statusMessage = `Failed to refresh labels: ${error.message}`;
+  } finally {
+    state.ingestSetup.loading = false;
+    renderIngestSetupModal();
+  }
+}
+
+async function saveIngestSetup() {
+  if (!state.auth.token) {
+    return;
+  }
+
+  const selectedLabelIds = [...new Set(state.ingestSetup.selectedLabelIds)];
+  if (selectedLabelIds.length === 0) {
+    state.ingestSetup.statusMessage = "Select at least one label to track.";
+    renderIngestSetupModal();
+    return;
+  }
+
+  const selectedLabelNames = state.ingestSetup.labels
+    .filter((label) => selectedLabelIds.includes(label.id))
+    .map((label) => label.name);
+  const scheduleTime = parseScheduleTime(refs.ingestSetupTime.value);
+
+  state.ingestSetup.saving = true;
+  state.ingestSetup.statusMessage = "Saving ingest setup...";
+  renderIngestSetupModal();
+
+  try {
+    await apiFetch("/api/gmail/preferences", {
+      method: "PUT",
+      body: JSON.stringify({
+        query: refs.ingestSetupQuery.value.trim(),
+        maxResults: Math.max(1, Math.min(100, Number(refs.ingestSetupMaxResults.value || 30))),
+        trackedLabelIds: selectedLabelIds,
+        trackedLabelNames: selectedLabelNames,
+        scheduleEnabled: true,
+        scheduleHour: scheduleTime.hour,
+        scheduleMinute: scheduleTime.minute,
+        scheduleTimezone: refs.ingestSetupTimezone.value.trim() || "Asia/Kolkata",
+        startFromNow: refs.ingestSetupStartNow.checked
+      })
+    });
+
+    state.ingestSetup.statusMessage = "Ingest setup saved.";
+    state.ingestSetup.startFromNow = false;
+    setPipelineMessage(
+      `Tracking ${selectedLabelIds.length} labels. Daily ingest at ${formatScheduleTime(
+        scheduleTime.hour,
+        scheduleTime.minute
+      )} (${refs.ingestSetupTimezone.value.trim() || "Asia/Kolkata"}).`
+    );
+    closeIngestSetupModal();
+    await refreshAuthState();
+  } catch (error) {
+    state.ingestSetup.statusMessage = `Save failed: ${error.message}`;
+    renderIngestSetupModal();
+  } finally {
+    state.ingestSetup.saving = false;
+    renderIngestSetupModal();
+  }
+}
+
 async function refreshAuthState() {
   renderAuthUi();
   if (!state.auth.token) {
     state.auth.user = null;
     state.auth.gmailConnected = false;
+    state.auth.ingestionPreferences = null;
     state.archives.items = [];
     state.archives.total = 0;
     renderAllDataViews();
@@ -1601,7 +1758,19 @@ async function refreshAuthState() {
     const me = await apiFetch("/api/auth/me");
     state.auth.user = me.user;
     state.auth.gmailConnected = Boolean(me.gmail?.connected);
-    if (me.ingestionPreferences?.query) {
+    state.auth.ingestionPreferences = me.ingestionPreferences || null;
+    const trackedCount = Number(state.auth.ingestionPreferences?.trackedLabelIds?.length || 0);
+    if (trackedCount > 0) {
+      const scheduleHour = state.auth.ingestionPreferences?.scheduleHour ?? 7;
+      const scheduleMinute = state.auth.ingestionPreferences?.scheduleMinute ?? 30;
+      const scheduleZone = state.auth.ingestionPreferences?.scheduleTimezone || "Asia/Kolkata";
+      setPipelineMessage(
+        `Auth connected. Tracking ${trackedCount} labels. Daily sync at ${formatScheduleTime(
+          scheduleHour,
+          scheduleMinute
+        )} (${scheduleZone}).`
+      );
+    } else if (me.ingestionPreferences?.query) {
       setPipelineMessage(`Auth connected. Gmail query default: ${me.ingestionPreferences.query}`);
     } else {
       setPipelineMessage("Auth connected.");
@@ -1612,6 +1781,7 @@ async function refreshAuthState() {
     clearAuthToken();
     state.auth.user = null;
     state.auth.gmailConnected = false;
+    state.auth.ingestionPreferences = null;
     setPipelineMessage("Session expired. Please sign in with Google again.");
   } finally {
     state.auth.loading = false;
@@ -1650,8 +1820,10 @@ async function signOut() {
   clearAuthToken();
   state.auth.user = null;
   state.auth.gmailConnected = false;
+  state.auth.ingestionPreferences = null;
   state.archives.items = [];
   state.archives.total = 0;
+  closeIngestSetupModal();
   setPipelineMessage("Signed out.");
   renderAll();
 }
@@ -2099,26 +2271,32 @@ async function submitNotificationSuggestion() {
   renderNotifications();
 }
 
-async function saveQueuedNotificationReviews() {
-  const queuedEntries = Object.entries(state.notifications.reviewQueue || {});
-  if (queuedEntries.length === 0) {
-    state.notifications.reviewFeedback = "No queued review labels to save.";
+async function saveNotificationReview(dedupAnnouncementKey, reviewedLabel) {
+  const normalizedKey = String(dedupAnnouncementKey ?? "").trim();
+  const normalizedLabel = String(reviewedLabel ?? "").trim().toLowerCase();
+  if (!normalizedKey || !normalizedLabel) {
+    state.notifications.reviewFeedback = "Missing key or label for review save.";
     renderNotifications();
     return;
   }
 
   state.notifications.reviewSaving = true;
+  state.notifications.reviewSavingKey = normalizedKey;
+  state.notifications.reviewFeedback = "Saving correct classification...";
   renderNotifications();
 
   try {
-    const reviews = queuedEntries.map(([dedupAnnouncementKey, payload]) => ({
-      dedupAnnouncementKey,
-      reviewedLabel: String(payload?.reviewedLabel ?? "").trim()
-    }));
-    const requestBody = JSON.stringify({ reviews });
+    const requestBody = JSON.stringify({
+      reviewer: "web-ui",
+      reviews: [
+        {
+          dedupAnnouncementKey: normalizedKey,
+          reviewedLabel: normalizedLabel
+        }
+      ]
+    });
     let response = null;
     let requestError = null;
-
     const notificationsBase = getNotificationsApiBase();
 
     try {
@@ -2132,7 +2310,7 @@ async function saveQueuedNotificationReviews() {
         false
       );
     } catch (error) {
-      requestError = error instanceof Error ? error : new Error("Unknown save error");
+      requestError = error instanceof Error ? error : new Error("Unknown review save error");
     }
 
     if (!response) {
@@ -2148,32 +2326,29 @@ async function saveQueuedNotificationReviews() {
     }
 
     if (!response) {
-      throw requestError || new Error("Failed to save reviewed labels");
+      throw requestError || new Error("Failed to save reviewed label");
     }
 
+    const updatedAt = String(response?.updatedAt ?? new Date().toISOString());
     for (const item of state.notifications.items) {
-      const dedupAnnouncementKey = getDedupAnnouncementKey(item);
-      const queued = state.notifications.reviewQueue[dedupAnnouncementKey];
-      if (!queued) {
+      if (getDedupAnnouncementKey(item) !== normalizedKey) {
         continue;
       }
-      item.review_label = queued.reviewedLabel;
-      item.reviewed_at = new Date().toISOString();
+      item.review_label = normalizedLabel;
+      item.reviewed_at = updatedAt;
     }
 
-    state.notifications.reviewQueue = {};
-    const savedCount = Number(response?.savedCount ?? queuedEntries.length);
-    const invalidCount = Number(response?.invalidCount ?? 0);
     const diagnostics = response?.diagnostics && typeof response.diagnostics === "object" ? response.diagnostics : null;
     const agreementRate = Number(diagnostics?.agreementRate);
     const agreementText = Number.isFinite(agreementRate) ? ` Agreement: ${Math.round(agreementRate * 100)}%.` : "";
     const learningRules = Array.isArray(response?.promptLearning?.learnedRules) ? response.promptLearning.learnedRules : [];
     const learningText = learningRules.length > 0 ? ` Prompt rules active: ${learningRules.length}.` : "";
-    state.notifications.reviewFeedback = `Saved ${savedCount} reviewed labels.${invalidCount > 0 ? ` Invalid: ${invalidCount}.` : ""}${agreementText}${learningText}`;
+    state.notifications.reviewFeedback = `Saved correct classification.${agreementText}${learningText}`;
   } catch (error) {
-    state.notifications.reviewFeedback = `Failed to save reviewed labels: ${error.message}`;
+    state.notifications.reviewFeedback = `Failed to save correct classification: ${error.message}`;
   } finally {
     state.notifications.reviewSaving = false;
+    state.notifications.reviewSavingKey = "";
     renderNotifications();
   }
 }
@@ -2195,9 +2370,6 @@ async function fetchNotifications() {
     exchange === "DEDUP"
       ? normalizeAiLabelFilterValue(refs.notificationsAiLabelFilter?.value ?? state.notifications.aiLabelFilter ?? "all")
       : "all";
-  if (exchange === "DEDUP" && !state.notifications.suggestionsLoaded && !state.notifications.suggestionsLoading) {
-    void fetchNotificationSuggestions();
-  }
   const symbol = (refs.notificationsSymbolInput?.value ?? "").trim().toUpperCase();
   const limitInput = Number.parseInt(refs.notificationsLimitSelect?.value ?? "50", 10);
   const limit = Number.isFinite(limitInput) ? Math.max(1, Math.min(500, limitInput)) : 50;

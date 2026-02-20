@@ -1,5 +1,6 @@
 .DS_Store
 backend/node_modules
+backend-brokerage/node_modules
 *.log
 backend/data
 backend-brokerage/data

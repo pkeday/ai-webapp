@@ -11,6 +11,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import pg from "pg";
 
 const port = Number.parseInt(process.env.PORT ?? "10001", 10);
 const appName = process.env.APP_NAME ?? "ai-webapp-brokerage-api";
@@ -57,6 +58,9 @@ const googleRedirectUri = process.env.GOOGLE_REDIRECT_URI?.trim() || "";
 const googleScopes =
   process.env.GOOGLE_OAUTH_SCOPES?.trim() ||
   "openid email profile https://www.googleapis.com/auth/gmail.readonly";
+const databaseUrl = process.env.DATABASE_URL?.trim() || "";
+const databaseSslMode = (process.env.DATABASE_SSL_MODE || (isProduction ? "require" : "disable")).trim().toLowerCase();
+const databaseMaxConnections = Number.parseInt(process.env.DATABASE_MAX_CONNECTIONS ?? "5", 10);
 
 const frontendUrl = process.env.FRONTEND_URL?.trim() || corsOrigins[0] || "http://localhost:5173";
 const allowedRedirects = new Set(
@@ -75,6 +79,8 @@ const serviceRootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const dataDir = path.resolve(serviceRootDir, process.env.BROKERAGE_DATA_DIR?.trim() || "data");
 const dbFilePath = path.join(dataDir, "app-db.json");
 const archiveRootDir = path.join(dataDir, "email-archive");
+const dbSnapshotTable = "brokerage_app_state";
+const dbSnapshotId = "primary";
 
 const defaultBrokerMappings = [
   {
@@ -112,6 +118,17 @@ const defaultDb = {
   }
 };
 
+const { Pool } = pg;
+const databasePool = databaseUrl
+  ? new Pool({
+      connectionString: databaseUrl,
+      max: Number.isFinite(databaseMaxConnections) ? Math.max(1, databaseMaxConnections) : 5,
+      ssl: databaseSslMode === "disable" ? false : { rejectUnauthorized: false }
+    })
+  : null;
+let databaseReady = false;
+
+await initializeDatabase();
 let db = await loadDb();
 let persistQueue = Promise.resolve();
 
@@ -202,17 +219,92 @@ async function readJsonBody(req) {
   }
 }
 
-async function loadDb() {
-  await mkdir(dataDir, { recursive: true });
+function isDatabaseEnabled() {
+  return Boolean(databasePool && databaseReady);
+}
+
+async function initializeDatabase() {
+  if (!databasePool) {
+    return;
+  }
 
   try {
-    const raw = await readFile(dbFilePath, "utf8");
-    const parsed = JSON.parse(raw);
-    return mergeDbDefaults(parsed);
-  } catch {
-    await writeJsonFile(dbFilePath, defaultDb);
-    return structuredClone(defaultDb);
+    await databasePool.query(`
+      CREATE TABLE IF NOT EXISTS ${dbSnapshotTable} (
+        id TEXT PRIMARY KEY,
+        state_json JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    databaseReady = true;
+    log("Postgres storage initialized", { table: dbSnapshotTable });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown database init error";
+    log("Postgres init failed. Falling back to file storage.", { message });
+    databaseReady = false;
   }
+}
+
+async function readDbFromDatabase() {
+  if (!isDatabaseEnabled()) {
+    return null;
+  }
+
+  const result = await databasePool.query(`SELECT state_json FROM ${dbSnapshotTable} WHERE id = $1`, [dbSnapshotId]);
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return result.rows[0]?.state_json ?? null;
+}
+
+async function writeDbToDatabase(value) {
+  if (!isDatabaseEnabled()) {
+    return;
+  }
+
+  await databasePool.query(
+    `INSERT INTO ${dbSnapshotTable} (id, state_json, updated_at)
+     VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (id)
+     DO UPDATE SET state_json = EXCLUDED.state_json, updated_at = NOW()`,
+    [dbSnapshotId, JSON.stringify(value)]
+  );
+}
+
+function normalizeGmailPreferencesEntry(entry) {
+  const nowIso = new Date().toISOString();
+  const scheduleHour = Number.parseInt(String(entry?.scheduleHour ?? "7"), 10);
+  const scheduleMinute = Number.parseInt(String(entry?.scheduleMinute ?? "30"), 10);
+
+  return {
+    userId: String(entry?.userId ?? ""),
+    maxResults: Math.max(1, Math.min(100, Number(entry?.maxResults ?? 25) || 25)),
+    query: typeof entry?.query === "string" ? entry.query : "",
+    includeUnmapped: entry?.includeUnmapped === true,
+    brokerMappings:
+      Array.isArray(entry?.brokerMappings) && entry.brokerMappings.length > 0
+        ? entry.brokerMappings
+        : structuredClone(defaultBrokerMappings),
+    trackedLabelIds: Array.isArray(entry?.trackedLabelIds)
+      ? entry.trackedLabelIds.map((value) => String(value).trim()).filter(Boolean)
+      : [],
+    trackedLabelNames: Array.isArray(entry?.trackedLabelNames)
+      ? entry.trackedLabelNames.map((value) => String(value).trim()).filter(Boolean)
+      : [],
+    scheduleEnabled: entry?.scheduleEnabled === true,
+    scheduleHour: Number.isInteger(scheduleHour) ? Math.max(0, Math.min(23, scheduleHour)) : 7,
+    scheduleMinute: Number.isInteger(scheduleMinute) ? Math.max(0, Math.min(59, scheduleMinute)) : 30,
+    scheduleTimezone: typeof entry?.scheduleTimezone === "string" ? entry.scheduleTimezone : "Asia/Kolkata",
+    lastIngestAfterEpoch: Math.max(0, Number.parseInt(String(entry?.lastIngestAfterEpoch ?? "0"), 10) || 0),
+    lastScheduledRunDate:
+      typeof entry?.lastScheduledRunDate === "string" && entry.lastScheduledRunDate.trim()
+        ? entry.lastScheduledRunDate.trim()
+        : null,
+    lastIngestAt:
+      typeof entry?.lastIngestAt === "string" && entry.lastIngestAt.trim() ? entry.lastIngestAt.trim() : null,
+    updatedAt: typeof entry?.updatedAt === "string" ? entry.updatedAt : nowIso
+  };
 }
 
 function mergeDbDefaults(value) {
@@ -230,15 +322,57 @@ function mergeDbDefaults(value) {
     users: Array.isArray(value.users) ? value.users : [],
     sessions: Array.isArray(value.sessions) ? value.sessions : [],
     gmailConnections: Array.isArray(value.gmailConnections) ? value.gmailConnections : [],
-    gmailPreferences: Array.isArray(value.gmailPreferences) ? value.gmailPreferences : [],
+    gmailPreferences: Array.isArray(value.gmailPreferences)
+      ? value.gmailPreferences.map((entry) => normalizeGmailPreferencesEntry(entry))
+      : [],
     emailArchives: Array.isArray(value.emailArchives) ? value.emailArchives : [],
     notes: Array.isArray(value.notes) ? value.notes : []
   };
 }
 
+async function loadDb() {
+  await mkdir(dataDir, { recursive: true });
+
+  if (isDatabaseEnabled()) {
+    try {
+      const dbState = await readDbFromDatabase();
+      if (dbState) {
+        log("Loaded brokerage state from Postgres");
+        return mergeDbDefaults(dbState);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown DB read error";
+      log("Failed reading brokerage state from Postgres. Falling back to file.", { message });
+    }
+  }
+
+  try {
+    const raw = await readFile(dbFilePath, "utf8");
+    const parsed = JSON.parse(raw);
+    const merged = mergeDbDefaults(parsed);
+    if (isDatabaseEnabled()) {
+      await writeDbToDatabase(merged);
+      log("Backfilled brokerage state to Postgres from file snapshot");
+    }
+    return merged;
+  } catch {
+    const fresh = structuredClone(defaultDb);
+    await writeJsonFile(dbFilePath, fresh);
+    if (isDatabaseEnabled()) {
+      await writeDbToDatabase(fresh);
+    }
+    return fresh;
+  }
+}
+
 function persistDb() {
   persistQueue = persistQueue
-    .then(() => writeJsonFile(dbFilePath, db))
+    .then(async () => {
+      if (isDatabaseEnabled()) {
+        await writeDbToDatabase(db);
+      }
+      await writeJsonFile(dbFilePath, db);
+    })
     .catch((error) => {
       log("Failed to persist db", { message: error instanceof Error ? error.message : String(error) });
     });
@@ -395,15 +529,27 @@ function getGoogleConnection(userId) {
 function getOrCreateGmailPreferences(userId) {
   let prefs = db.gmailPreferences.find((entry) => entry.userId === userId);
   if (!prefs) {
+    const nowEpoch = Math.floor(Date.now() / 1000);
     prefs = {
       userId,
       maxResults: 25,
-      query: "newer_than:7d",
+      query: "",
       includeUnmapped: false,
       brokerMappings: structuredClone(defaultBrokerMappings),
+      trackedLabelIds: [],
+      trackedLabelNames: [],
+      scheduleEnabled: false,
+      scheduleHour: 7,
+      scheduleMinute: 30,
+      scheduleTimezone: "Asia/Kolkata",
+      lastIngestAfterEpoch: nowEpoch,
+      lastScheduledRunDate: null,
+      lastIngestAt: null,
       updatedAt: new Date().toISOString()
     };
     db.gmailPreferences.push(prefs);
+  } else {
+    Object.assign(prefs, normalizeGmailPreferencesEntry(prefs));
   }
 
   return prefs;
@@ -454,6 +600,85 @@ function resolveRedirect(value) {
     return value;
   }
   return frontendUrl;
+}
+
+function isValidTimeZone(value) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveTimeZone(value) {
+  const trimmed = String(value ?? "").trim();
+  if (trimmed && isValidTimeZone(trimmed)) {
+    return trimmed;
+  }
+  return "Asia/Kolkata";
+}
+
+function getZonedDateParts(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: resolveTimeZone(timeZone),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+  const partMap = Object.fromEntries(
+    formatter
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value])
+  );
+
+  return {
+    dateKey: `${partMap.year}-${partMap.month}-${partMap.day}`,
+    hour: Number.parseInt(partMap.hour ?? "0", 10),
+    minute: Number.parseInt(partMap.minute ?? "0", 10)
+  };
+}
+
+function isScheduleDueNow(prefs, now = new Date()) {
+  if (!prefs?.scheduleEnabled) {
+    return false;
+  }
+
+  const parts = getZonedDateParts(now, prefs.scheduleTimezone);
+  const scheduleHour = Number.parseInt(String(prefs.scheduleHour ?? 0), 10);
+  const scheduleMinute = Number.parseInt(String(prefs.scheduleMinute ?? 0), 10);
+  const dueTimeReached = parts.hour > scheduleHour || (parts.hour === scheduleHour && parts.minute >= scheduleMinute);
+  if (!dueTimeReached) {
+    return false;
+  }
+
+  return prefs.lastScheduledRunDate !== parts.dateKey;
+}
+
+function composeIngestQuery(baseQuery, afterEpoch) {
+  const chunks = [];
+  if (typeof baseQuery === "string" && baseQuery.trim()) {
+    chunks.push(baseQuery.trim());
+  }
+  if (Number.isFinite(afterEpoch) && afterEpoch > 0) {
+    chunks.push(`after:${Math.floor(afterEpoch)}`);
+  }
+  return chunks.join(" ").trim();
+}
+
+function sanitizeLabelList(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return values
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .slice(0, 100);
 }
 
 function isGoogleConfigured() {
@@ -698,6 +923,17 @@ async function gmailApiGet(accessToken, endpoint, query = undefined) {
       if (value === undefined || value === null || value === "") {
         continue;
       }
+
+      if (Array.isArray(value)) {
+        for (const entry of value) {
+          if (entry === undefined || entry === null || entry === "") {
+            continue;
+          }
+          url.searchParams.append(key, String(entry));
+        }
+        continue;
+      }
+
       url.searchParams.set(key, String(value));
     }
   }
@@ -855,18 +1091,7 @@ async function archiveGmailMessage(user, gmailMessage, rawData, includeAttachmen
   const bodyPreview = extractBodyPreview(payload, gmailMessage.snippet ?? "");
 
   const archiveId = newId("arc");
-  const year = String(now.getUTCFullYear());
-  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
-
-  const emailDir = path.join(archiveRootDir, user.id, "emails", year, month);
-  const attachmentDir = path.join(archiveRootDir, user.id, "attachments", archiveId);
-  await mkdir(emailDir, { recursive: true });
-  await mkdir(attachmentDir, { recursive: true });
-
-  const emlFileName = `${archiveId}.eml`;
-  const emlAbsolutePath = path.join(emailDir, emlFileName);
   const rawBuffer = decodeGoogleBase64(rawData.raw ?? "");
-  await writeFile(emlAbsolutePath, rawBuffer);
 
   const attachments = [];
   if (includeAttachments) {
@@ -880,21 +1105,15 @@ async function archiveGmailMessage(user, gmailMessage, rawData, includeAttachmen
       );
       const fileData = decodeGoogleBase64(attachmentPayload.data ?? "");
       const baseName = sanitizeFileName(part.filename || `attachment_${index + 1}`);
-      const diskName = `${String(index + 1).padStart(2, "0")}-${baseName}`;
-      const attachmentAbsolutePath = path.join(attachmentDir, diskName);
-      await writeFile(attachmentAbsolutePath, fileData);
 
       attachments.push({
         filename: part.filename || baseName,
-        diskName,
         mimeType: part.mimeType,
         sizeBytes: fileData.length,
-        relativePath: path.relative(dataDir, attachmentAbsolutePath)
+        contentBase64: fileData.toString("base64")
       });
     }
   }
-
-  const emlRelativePath = path.relative(dataDir, emlAbsolutePath);
 
   const record = {
     id: archiveId,
@@ -910,7 +1129,8 @@ async function archiveGmailMessage(user, gmailMessage, rawData, includeAttachmen
     gmailThreadId: String(gmailMessage.threadId ?? ""),
     gmailMessageUrl: `https://mail.google.com/mail/u/0/#inbox/${gmailMessageId}`,
     internalDateMs: Number(gmailMessage.internalDate ?? Date.now()),
-    emlRelativePath,
+    emlRelativePath: null,
+    emlContentBase64: rawBuffer.toString("base64"),
     attachments,
     ingestedAt: nowIso,
     duplicateOfArchiveId: null
@@ -961,6 +1181,17 @@ async function sendStoredFile(req, res, absolutePath, options) {
   } catch {
     sendJson(req, res, 404, { error: "File not found" });
   }
+}
+
+function sendBufferFile(req, res, buffer, options) {
+  applyCorsHeaders(req, res);
+  res.statusCode = 200;
+  res.setHeader("Content-Type", options.contentType || "application/octet-stream");
+  if (options.downloadName) {
+    res.setHeader("Content-Disposition", `attachment; filename="${sanitizeFileName(options.downloadName)}"`);
+  }
+  res.setHeader("Content-Length", String(buffer.length));
+  res.end(buffer);
 }
 
 function getPublicApiBase(req) {
@@ -1043,6 +1274,7 @@ async function handleCronRun(req, res) {
 
   db.cronState.runCount += 1;
   db.cronState.lastRunAt = new Date().toISOString();
+  const scheduleSummary = await runScheduledIngests(body.trigger ?? "cron");
   await persistDb();
 
   log("Cron run received", {
@@ -1053,7 +1285,8 @@ async function handleCronRun(req, res) {
   sendJson(req, res, 200, {
     ok: true,
     runCount: db.cronState.runCount,
-    lastCronRunAt: db.cronState.lastRunAt
+    lastCronRunAt: db.cronState.lastRunAt,
+    scheduleSummary
   });
 }
 
@@ -1181,7 +1414,16 @@ async function handleAuthMe(req, res, auth) {
       maxResults: prefs.maxResults,
       query: prefs.query,
       includeUnmapped: prefs.includeUnmapped,
-      brokerMappings: prefs.brokerMappings
+      brokerMappings: prefs.brokerMappings,
+      trackedLabelIds: prefs.trackedLabelIds,
+      trackedLabelNames: prefs.trackedLabelNames,
+      scheduleEnabled: prefs.scheduleEnabled,
+      scheduleHour: prefs.scheduleHour,
+      scheduleMinute: prefs.scheduleMinute,
+      scheduleTimezone: prefs.scheduleTimezone,
+      lastIngestAfterEpoch: prefs.lastIngestAfterEpoch,
+      lastIngestAt: prefs.lastIngestAt,
+      lastScheduledRunDate: prefs.lastScheduledRunDate
     }
   });
 }
@@ -1208,6 +1450,30 @@ async function handleGetGmailConnection(req, res, auth) {
   });
 }
 
+async function handleGetGmailLabels(req, res, auth) {
+  const connection = getGoogleConnection(auth.user.id);
+  if (!connection) {
+    sendJson(req, res, 400, { error: "Gmail is not connected for this user." });
+    return;
+  }
+
+  const accessToken = await getValidGoogleAccessToken(connection);
+  const labelResponse = await gmailApiGet(accessToken, "labels");
+  const labels = Array.isArray(labelResponse.labels) ? labelResponse.labels : [];
+  const sorted = labels
+    .map((label) => ({
+      id: String(label.id ?? ""),
+      name: String(label.name ?? ""),
+      type: String(label.type ?? "user").toLowerCase(),
+      messagesTotal: Number(label.messagesTotal ?? 0),
+      threadsTotal: Number(label.threadsTotal ?? 0)
+    }))
+    .filter((label) => label.id && label.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  sendJson(req, res, 200, { labels: sorted, total: sorted.length });
+}
+
 async function handleGetGmailPreferences(req, res, auth) {
   const prefs = getOrCreateGmailPreferences(auth.user.id);
   await persistDb();
@@ -1221,6 +1487,13 @@ async function handlePutGmailPreferences(req, res, auth) {
   const maxResults = Number(body.maxResults ?? prefs.maxResults);
   const includeUnmapped = Boolean(body.includeUnmapped ?? prefs.includeUnmapped);
   const query = typeof body.query === "string" ? body.query.trim() : prefs.query;
+  const trackedLabelIds = sanitizeLabelList(body.trackedLabelIds ?? prefs.trackedLabelIds);
+  const trackedLabelNames = sanitizeLabelList(body.trackedLabelNames ?? prefs.trackedLabelNames);
+  const scheduleEnabled = Boolean(body.scheduleEnabled ?? prefs.scheduleEnabled);
+  const scheduleHour = Number.parseInt(String(body.scheduleHour ?? prefs.scheduleHour), 10);
+  const scheduleMinute = Number.parseInt(String(body.scheduleMinute ?? prefs.scheduleMinute), 10);
+  const scheduleTimezone = resolveTimeZone(body.scheduleTimezone ?? prefs.scheduleTimezone);
+  const resetCursorToNow = body.startFromNow === true;
 
   let brokerMappings = prefs.brokerMappings;
   if (Array.isArray(body.brokerMappings)) {
@@ -1240,34 +1513,47 @@ async function handlePutGmailPreferences(req, res, auth) {
   prefs.query = query;
   prefs.includeUnmapped = includeUnmapped;
   prefs.brokerMappings = brokerMappings.length > 0 ? brokerMappings : structuredClone(defaultBrokerMappings);
+  prefs.trackedLabelIds = trackedLabelIds;
+  prefs.trackedLabelNames = trackedLabelNames;
+  prefs.scheduleEnabled = scheduleEnabled;
+  prefs.scheduleHour = Number.isInteger(scheduleHour) ? Math.max(0, Math.min(23, scheduleHour)) : 7;
+  prefs.scheduleMinute = Number.isInteger(scheduleMinute) ? Math.max(0, Math.min(59, scheduleMinute)) : 30;
+  prefs.scheduleTimezone = scheduleTimezone;
+  if (resetCursorToNow) {
+    prefs.lastIngestAfterEpoch = Math.floor(Date.now() / 1000);
+  }
   prefs.updatedAt = new Date().toISOString();
 
   await persistDb();
   sendJson(req, res, 200, prefs);
 }
 
-async function handleGmailIngest(req, res, auth) {
-  const connection = getGoogleConnection(auth.user.id);
-  if (!connection) {
-    sendJson(req, res, 400, { error: "Gmail is not connected for this user." });
-    return;
+async function runGmailIngestForUser(params) {
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const labelIds = sanitizeLabelList(params.labelIds ?? params.prefs.trackedLabelIds);
+
+  if (labelIds.length === 0) {
+    throw new Error("No tracked labels selected. Configure labels in Ingest setup.");
   }
 
-  const prefs = getOrCreateGmailPreferences(auth.user.id);
-  const body = await readJsonBody(req);
-
-  const includeAttachments = body.includeAttachments !== false;
+  const includeAttachments = params.includeAttachments !== false;
   const maxResults = Math.max(
     1,
-    Math.min(100, Number.isFinite(Number(body.maxResults)) ? Number(body.maxResults) : prefs.maxResults)
+    Math.min(100, Number.isFinite(Number(params.maxResults)) ? Number(params.maxResults) : params.prefs.maxResults)
   );
-  const query = typeof body.query === "string" && body.query.trim() ? body.query.trim() : prefs.query;
 
-  const accessToken = await getValidGoogleAccessToken(connection);
+  const explicitQuery = typeof params.query === "string" && params.query.trim() ? params.query.trim() : params.prefs.query;
+  const startAfterEpoch =
+    Number.isFinite(Number(params.afterEpoch)) && Number(params.afterEpoch) > 0
+      ? Number(params.afterEpoch)
+      : Number(params.prefs.lastIngestAfterEpoch ?? 0);
+  const query = composeIngestQuery(explicitQuery, startAfterEpoch);
+  const accessToken = await getValidGoogleAccessToken(params.connection);
 
   const listResponse = await gmailApiGet(accessToken, "messages", {
     maxResults,
-    q: query
+    q: query,
+    labelIds
   });
 
   const messages = Array.isArray(listResponse.messages) ? listResponse.messages : [];
@@ -1277,6 +1563,7 @@ async function handleGmailIngest(req, res, auth) {
   let skippedCount = 0;
   let skippedUnmappedCount = 0;
   let attachmentCount = 0;
+  let newestInternalEpoch = 0;
 
   for (const messageStub of messages) {
     const full = await gmailApiGet(accessToken, `messages/${messageStub.id}`, { format: "full" });
@@ -1284,15 +1571,17 @@ async function handleGmailIngest(req, res, auth) {
 
     const from = getHeader(full.payload?.headers, "From");
     const sender = parseFromHeader(from);
-    const broker = detectBroker(`${from} ${sender.email}`, prefs.brokerMappings);
+    const broker = detectBroker(`${from} ${sender.email}`, params.prefs.brokerMappings);
+    const internalEpoch = Math.floor(Number(full.internalDate ?? Date.now()) / 1000);
+    newestInternalEpoch = Math.max(newestInternalEpoch, internalEpoch);
 
-    if (broker === "Unmapped Broker" && !prefs.includeUnmapped) {
+    if (broker === "Unmapped Broker" && !params.prefs.includeUnmapped) {
       skippedCount += 1;
       skippedUnmappedCount += 1;
       continue;
     }
 
-    const archived = await archiveGmailMessage(auth.user, full, raw, includeAttachments, accessToken, broker);
+    const archived = await archiveGmailMessage(params.user, full, raw, includeAttachments, accessToken, broker);
 
     if (!archived.archived) {
       skippedCount += 1;
@@ -1304,10 +1593,11 @@ async function handleGmailIngest(req, res, auth) {
     results.push(makeArchivePublicRecord(archived.record));
   }
 
-  await persistDb();
+  params.prefs.lastIngestAfterEpoch = Math.max(startAfterEpoch, newestInternalEpoch, nowEpoch);
+  params.prefs.lastIngestAt = new Date().toISOString();
+  params.prefs.updatedAt = new Date().toISOString();
 
-  sendJson(req, res, 200, {
-    ok: true,
+  return {
     summary: {
       queryUsed: query,
       requestedMaxResults: maxResults,
@@ -1315,9 +1605,106 @@ async function handleGmailIngest(req, res, auth) {
       archivedCount,
       skippedCount,
       skippedUnmappedCount,
-      attachmentCount
+      attachmentCount,
+      trackedLabels: labelIds,
+      cursorAfterEpoch: params.prefs.lastIngestAfterEpoch
     },
     items: results
+  };
+}
+
+async function runScheduledIngests(trigger = "scheduled") {
+  const now = new Date();
+  const details = [];
+  let dueUsers = 0;
+  let successfulRuns = 0;
+  let failedRuns = 0;
+  let archivedCount = 0;
+
+  for (const connection of db.gmailConnections) {
+    const user = getUserById(connection.userId);
+    if (!user) {
+      continue;
+    }
+
+    const prefs = getOrCreateGmailPreferences(user.id);
+    if (!prefs.scheduleEnabled || prefs.trackedLabelIds.length === 0) {
+      continue;
+    }
+
+    if (!isScheduleDueNow(prefs, now)) {
+      continue;
+    }
+
+    dueUsers += 1;
+    const zoneParts = getZonedDateParts(now, prefs.scheduleTimezone);
+
+    try {
+      const ingest = await runGmailIngestForUser({
+        user,
+        prefs,
+        connection,
+        includeAttachments: true
+      });
+      prefs.lastScheduledRunDate = zoneParts.dateKey;
+      successfulRuns += 1;
+      archivedCount += ingest.summary.archivedCount;
+      details.push({
+        userId: user.id,
+        email: user.email,
+        status: "ok",
+        archivedCount: ingest.summary.archivedCount,
+        fetchedMessages: ingest.summary.fetchedMessages
+      });
+    } catch (error) {
+      failedRuns += 1;
+      details.push({
+        userId: user.id,
+        email: user.email,
+        status: "failed",
+        error: error instanceof Error ? error.message : "Unknown ingest error"
+      });
+    }
+  }
+
+  await persistDb();
+
+  return {
+    trigger,
+    dueUsers,
+    successfulRuns,
+    failedRuns,
+    archivedCount,
+    details
+  };
+}
+
+async function handleGmailIngest(req, res, auth) {
+  const connection = getGoogleConnection(auth.user.id);
+  if (!connection) {
+    sendJson(req, res, 400, { error: "Gmail is not connected for this user." });
+    return;
+  }
+
+  const prefs = getOrCreateGmailPreferences(auth.user.id);
+  const body = await readJsonBody(req);
+  const ingest = await runGmailIngestForUser({
+    user: auth.user,
+    prefs,
+    connection,
+    includeAttachments: body.includeAttachments !== false,
+    maxResults: body.maxResults,
+    query: body.query,
+    labelIds: body.labelIds,
+    afterEpoch: body.afterEpoch
+  });
+
+  await persistDb();
+
+  sendJson(req, res, 200, {
+    ok: true,
+    summary: ingest.summary,
+    items: ingest.items
   });
 }
 
@@ -1354,8 +1741,21 @@ async function handleDownloadArchiveRaw(req, res, auth, archiveId) {
     return;
   }
 
-  const absolutePath = path.join(dataDir, record.emlRelativePath);
   const downloadName = `${sanitizeFileName(record.subject || archiveId)}.eml`;
+  if (record.emlContentBase64) {
+    sendBufferFile(req, res, Buffer.from(record.emlContentBase64, "base64"), {
+      contentType: "message/rfc822",
+      downloadName
+    });
+    return;
+  }
+
+  if (!record.emlRelativePath) {
+    sendJson(req, res, 404, { error: "Archive source file not available" });
+    return;
+  }
+
+  const absolutePath = path.join(dataDir, record.emlRelativePath);
   await sendStoredFile(req, res, absolutePath, {
     contentType: "message/rfc822",
     downloadName
@@ -1376,6 +1776,19 @@ async function handleDownloadArchiveAttachment(req, res, auth, archiveId, attach
   }
 
   const attachment = record.attachments[index];
+  if (attachment.contentBase64) {
+    sendBufferFile(req, res, Buffer.from(attachment.contentBase64, "base64"), {
+      contentType: attachment.mimeType || "application/octet-stream",
+      downloadName: attachment.filename
+    });
+    return;
+  }
+
+  if (!attachment.relativePath) {
+    sendJson(req, res, 404, { error: "Attachment file not available" });
+    return;
+  }
+
   const absolutePath = path.join(dataDir, attachment.relativePath);
 
   await sendStoredFile(req, res, absolutePath, {
@@ -1442,8 +1855,21 @@ async function handleSharedFileDownload(req, res, requestUrl) {
   }
 
   if (payload.kind === "raw") {
-    const absolutePath = path.join(dataDir, archive.emlRelativePath);
     const downloadName = `${sanitizeFileName(archive.subject || archive.id)}.eml`;
+    if (archive.emlContentBase64) {
+      sendBufferFile(req, res, Buffer.from(archive.emlContentBase64, "base64"), {
+        contentType: "message/rfc822",
+        downloadName
+      });
+      return;
+    }
+
+    if (!archive.emlRelativePath) {
+      sendJson(req, res, 404, { error: "Archive source file not available" });
+      return;
+    }
+
+    const absolutePath = path.join(dataDir, archive.emlRelativePath);
     await sendStoredFile(req, res, absolutePath, {
       contentType: "message/rfc822",
       downloadName
@@ -1456,6 +1882,19 @@ async function handleSharedFileDownload(req, res, requestUrl) {
     const attachment = archive.attachments[index];
     if (!attachment) {
       sendJson(req, res, 404, { error: "Attachment not found" });
+      return;
+    }
+
+    if (attachment.contentBase64) {
+      sendBufferFile(req, res, Buffer.from(attachment.contentBase64, "base64"), {
+        contentType: attachment.mimeType || "application/octet-stream",
+        downloadName: attachment.filename
+      });
+      return;
+    }
+
+    if (!attachment.relativePath) {
+      sendJson(req, res, 404, { error: "Attachment file not available" });
       return;
     }
 
@@ -1494,6 +1933,8 @@ const server = createServer(async (req, res) => {
           "GET /api/auth/google/url",
           "GET /api/auth/google/callback",
           "GET /api/auth/me",
+          "GET /api/gmail/labels",
+          "GET/PUT /api/gmail/preferences",
           "POST /api/gmail/ingest",
           "GET /api/email-archives"
         ]
@@ -1575,6 +2016,17 @@ const server = createServer(async (req, res) => {
       }
       if (method === "GET") {
         await handleGetGmailConnection(req, res, auth);
+        return;
+      }
+    }
+
+    if (pathName === "/api/gmail/labels") {
+      const auth = requireAuth(req, res);
+      if (!auth) {
+        return;
+      }
+      if (method === "GET") {
+        await handleGetGmailLabels(req, res, auth);
         return;
       }
     }

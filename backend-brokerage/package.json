@@ -6,7 +6,11 @@
   "description": "Sub-app 1 brokerage backend (auth + gmail ingest/archive)",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js"
+    "check": "node --check src/server.js",
+    "cron": "node src/cron.js"
+  },
+  "dependencies": {
+    "pg": "^8.18.0"
   },
   "engines": {
     "node": ">=20"

@@ -8,6 +8,7 @@
   --sidebar-text-muted: #9fc1b7;
   --text: #14231f;
   --muted: #58726a;
+  --text-soft: #58726a;
   --line: #d6e2dd;
   --line-strong: #b9cbc4;
   --accent: #155842;
@@ -147,6 +148,126 @@ body {
 
 .hidden {
   display: none !important;
+}
+
+.modal-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(8, 22, 18, 0.56);
+  cursor: pointer;
+}
+
+.modal-card {
+  position: relative;
+  width: min(920px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  box-shadow: 0 24px 56px rgba(15, 33, 29, 0.26);
+}
+
+.modal-header {
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.modal-header p {
+  margin: 6px 0 0;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.modal-body {
+  padding: 18px 20px;
+  display: grid;
+  gap: 12px;
+}
+
+.modal-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.modal-form-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.modal-form-grid input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 13px;
+}
+
+.modal-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ingest-label-list {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  max-height: 320px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  background: #f8fbfa;
+}
+
+.ingest-label-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.ingest-label-item .left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ingest-label-item .meta {
+  font-size: 11px;
+  color: var(--text-soft);
+}
+
+.modal-footer {
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .status-strip {
@@ -975,6 +1096,15 @@ input[type="checkbox"] {
   .table-pager {
     justify-content: center;
     flex-wrap: wrap;
+  }
+
+  .modal-card {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+  }
+
+  .modal-form-grid {
+    grid-template-columns: 1fr;
   }
 
   .kpi-grid {

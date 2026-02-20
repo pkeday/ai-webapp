@@ -59,6 +59,7 @@
               <div class="header-actions">
                 <button id="google-connect-btn" class="btn">Sign in with Google</button>
                 <button id="signout-btn" class="btn">Sign out</button>
+                <button id="ingest-setup-btn" class="btn">Ingest setup</button>
                 <button id="run-ingest-btn" class="btn">Run ingest now</button>
                 <button id="send-digest-btn" class="btn primary">Send digest preview</button>
               </div>
@@ -214,37 +215,7 @@
                 </label>
                 <button id="notifications-refresh-btn" class="btn" type="button">Refresh</button>
               </div>
-              <div id="notifications-review-panel" class="review-toolbar hidden">
-                <span id="notifications-review-summary" class="note"></span>
-                <button id="notifications-review-save-btn" class="btn" type="button">Save reviewed labels</button>
-              </div>
               <div id="notifications-review-feedback" class="note"></div>
-              <div id="notifications-suggestion-panel" class="suggestion-panel hidden">
-                <div class="suggestion-header">
-                  <strong>Suggest New AI Category</strong>
-                  <span class="suggestion-meta" id="notifications-suggestion-meta">No context selected</span>
-                </div>
-                <div class="suggestion-grid">
-                  <label>
-                    Suggested category
-                    <input id="notifications-suggestion-category" type="text" placeholder="Example: credit_facility_update" />
-                  </label>
-                  <label>
-                    Comment
-                    <textarea
-                      id="notifications-suggestion-comment"
-                      rows="2"
-                      placeholder="Why this should be a new category or how classification should improve"
-                    ></textarea>
-                  </label>
-                </div>
-                <div class="suggestion-actions">
-                  <button id="notifications-suggestion-submit-btn" class="btn" type="button">Submit suggestion</button>
-                  <button id="notifications-suggestion-clear-context-btn" class="btn" type="button">Clear row context</button>
-                </div>
-                <div id="notifications-suggestion-feedback" class="note"></div>
-                <div id="notifications-suggestion-list" class="suggestion-list"></div>
-              </div>
               <div id="notifications-meta" class="note"></div>
               <div class="table-wrap">
                 <table class="data-table">
@@ -257,8 +228,8 @@
                       <th>Type</th>
                       <th>AI Label</th>
                       <th>AI Notes</th>
-                      <th>Review Label</th>
-                      <th>Review Actions</th>
+                      <th>Correct Label</th>
+                      <th>Save</th>
                       <th>Attachment</th>
                     </tr>
                   </thead>
@@ -359,6 +330,57 @@
       </div>
     </div>
 
-    <script src="./app.js?v=20260219-2210" type="module"></script>
+    <div id="ingest-setup-modal" class="modal-shell hidden" role="dialog" aria-modal="true" aria-labelledby="ingest-setup-title">
+      <button class="modal-backdrop" data-ingest-close type="button" aria-label="Close ingest setup"></button>
+      <section class="modal-card" aria-live="polite">
+        <header class="modal-header">
+          <div>
+            <h3 id="ingest-setup-title">Ingest Setup</h3>
+            <p>Select Gmail labels to track and set daily ingestion time.</p>
+          </div>
+          <button id="ingest-setup-close-btn" class="btn" type="button">Close</button>
+        </header>
+        <div class="modal-body">
+          <div class="modal-form-grid">
+            <label>
+              Gmail query (optional)
+              <input id="ingest-setup-query" type="text" placeholder="Example: has:attachment newer_than:30d" />
+            </label>
+            <label>
+              Max messages per run
+              <input id="ingest-setup-max-results" type="number" min="1" max="100" value="30" />
+            </label>
+            <label>
+              Daily run time
+              <input id="ingest-setup-time" type="time" value="07:30" />
+            </label>
+            <label>
+              Time zone
+              <input id="ingest-setup-timezone" type="text" value="Asia/Kolkata" />
+            </label>
+          </div>
+
+          <div class="modal-actions-row">
+            <button id="ingest-setup-refresh-labels-btn" class="btn" type="button">Refresh labels</button>
+            <button id="ingest-setup-select-all-btn" class="btn" type="button">Select all labels</button>
+            <button id="ingest-setup-clear-all-btn" class="btn" type="button">Clear labels</button>
+          </div>
+
+          <label class="inline-check">
+            <input id="ingest-setup-start-now" type="checkbox" checked />
+            Start from now (ingest only new emails after save)
+          </label>
+
+          <div id="ingest-setup-labels" class="ingest-label-list"></div>
+          <div id="ingest-setup-status" class="note"></div>
+        </div>
+        <footer class="modal-footer">
+          <button id="ingest-setup-cancel-btn" class="btn" type="button">Cancel</button>
+          <button id="ingest-setup-save-btn" class="btn primary" type="button">Save setup</button>
+        </footer>
+      </section>
+    </div>
+
+    <script src="./app.js?v=20260220-1058" type="module"></script>
   </body>
 </html>
