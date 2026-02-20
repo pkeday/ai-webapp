@@ -69,10 +69,10 @@ Production setup in this project (default):
 - `AI_SUGGESTIONS_STORAGE_FILE`: Path to category suggestion store.
 - `AI_PROMPT_LEARNING_MIN_EXAMPLES`: Min reviewed mismatches needed before adding a learned prompt rule (default: `2`).
 - `AI_PROMPT_LEARNING_MAX_RULES`: Max learned prompt rules injected into classifier system prompt (default: `8`).
-- `AI_MAX_ITEMS_PER_CRON`: Max dedup announcements sent to models per cron run (default: `120`).
+- `AI_MAX_ITEMS_PER_CRON`: Max dedup announcements sent to models per cron run (default: `60`).
 - `AI_ASYNC_CHUNK_SIZE`: Legacy async chunk size (used only if legacy endpoints are enabled in code).
 - `AI_ASYNC_MAX_LOOPS`: Legacy async loop limit (used only if legacy endpoints are enabled in code).
-- `AI_CLASSIFICATION_CONCURRENCY`: Parallel AI classification workers (default: `3`).
+- `AI_CLASSIFICATION_CONCURRENCY`: Parallel AI classification workers (default: `2`).
 - `AI_PDF_FETCH_TIMEOUT_MS`: Timeout for PDF download before classification (default: `30000`).
 - `AI_PDF_FETCH_MAX_ATTEMPTS`: Max PDF download attempts (default: `3`).
 - `AI_PDF_PARSE_MAX_ATTEMPTS`: Max parse attempts per fetched PDF (default: `2`).
