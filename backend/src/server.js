@@ -55,7 +55,7 @@ const aiCriteriaVersion = process.env.AI_CRITERIA_VERSION ?? "v2";
 const aiClassifierEnabled = normalizeText(process.env.AI_CLASSIFIER_ENABLED ?? "false").toLowerCase() === "true";
 const aiPromptLearningMinExamples = Number.parseInt(process.env.AI_PROMPT_LEARNING_MIN_EXAMPLES ?? "1", 10);
 const aiPromptLearningMaxRules = Number.parseInt(process.env.AI_PROMPT_LEARNING_MAX_RULES ?? "8", 10);
-const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "40", 10);
+const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "120", 10);
 const aiConcurrency = Number.parseInt(process.env.AI_CLASSIFICATION_CONCURRENCY ?? "3", 10);
 const aiPersistCheckpointEvery = Number.parseInt(process.env.AI_PERSIST_CHECKPOINT_EVERY ?? "5", 10);
 const aiPendingBacklogShare = Number.parseFloat(process.env.AI_PENDING_BACKLOG_SHARE ?? "0.75");
@@ -105,6 +105,11 @@ const cronWindowTimezone = "Asia/Kolkata";
 const cronWindowStartHour = 9;
 const cronWindowEndHour = 21;
 const enableLegacyJobEndpoints = false;
+const apiSnapshotRefreshIntervalMsRaw = Number.parseInt(process.env.API_SNAPSHOT_REFRESH_INTERVAL_MS ?? "60000", 10);
+const apiSnapshotRefreshIntervalMs =
+  Number.isFinite(apiSnapshotRefreshIntervalMsRaw) && apiSnapshotRefreshIntervalMsRaw >= 10_000
+    ? Math.floor(apiSnapshotRefreshIntervalMsRaw)
+    : 60_000;
 
 const notes = [];
 let noteId = 1;
@@ -117,6 +122,11 @@ let lastAiChunkRunAt = null;
 let workerHeartbeatCount = 0;
 let lastWorkerHeartbeatAt = null;
 let storeWarmupPromise = null;
+let apiSnapshotRefreshTimer = null;
+let apiSnapshotRefreshInFlight = null;
+let apiSnapshotRefreshCount = 0;
+let lastApiSnapshotRefreshAt = null;
+let lastApiSnapshotRefreshError = null;
 
 const stores = {
   NSE: {
@@ -5587,6 +5597,14 @@ async function handleStatus(req, res) {
     aiSuggestionsCount: aiSuggestionStore.records.length,
     aiSuggestionsLastSyncAt: aiSuggestionStore.lastSyncAt,
     aiReviewDiagnostics,
+    apiSnapshotRefresh: {
+      enabled: isDatabaseEnabled(),
+      intervalMs: apiSnapshotRefreshIntervalMs,
+      runCount: apiSnapshotRefreshCount,
+      lastRefreshedAt: lastApiSnapshotRefreshAt,
+      inFlight: Boolean(apiSnapshotRefreshInFlight),
+      lastError: lastApiSnapshotRefreshError
+    },
     database: {
       enabled: isDatabaseEnabled(),
       ready: databaseReady,
@@ -5822,6 +5840,118 @@ export async function warmAnnouncementStores() {
   return storeWarmupPromise;
 }
 
+function markInMemorySnapshotsStale() {
+  stores.NSE.loaded = false;
+  stores.BSE.loaded = false;
+  stores.COMBINED.loaded = false;
+  stores.DEDUP.loaded = false;
+  aiLabelStore.loaded = false;
+  aiReviewStore.loaded = false;
+  aiSuggestionStore.loaded = false;
+  storeWarmupPromise = null;
+}
+
+function hasLocalStoreSyncInFlight() {
+  return Boolean(
+    stores.NSE.syncInFlight ||
+      stores.BSE.syncInFlight ||
+      stores.COMBINED.syncInFlight ||
+      stores.DEDUP.syncInFlight ||
+      aiLabelStore.syncInFlight ||
+      aiReviewStore.syncInFlight ||
+      aiSuggestionStore.syncInFlight
+  );
+}
+
+async function refreshApiInMemorySnapshots(reason = "interval") {
+  if (!isDatabaseEnabled()) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "database-disabled"
+    };
+  }
+
+  if (hasLocalStoreSyncInFlight()) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "local-sync-in-flight"
+    };
+  }
+
+  if (apiSnapshotRefreshInFlight) {
+    return apiSnapshotRefreshInFlight;
+  }
+
+  apiSnapshotRefreshInFlight = (async () => {
+    markInMemorySnapshotsStale();
+    await warmAnnouncementStores();
+
+    apiSnapshotRefreshCount += 1;
+    lastApiSnapshotRefreshAt = new Date().toISOString();
+    lastApiSnapshotRefreshError = null;
+    return {
+      ok: true,
+      skipped: false,
+      reason,
+      runCount: apiSnapshotRefreshCount,
+      lastApiSnapshotRefreshAt
+    };
+  })()
+    .catch((error) => {
+      const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown refresh error"));
+      lastApiSnapshotRefreshError = message;
+      log("API snapshot refresh failed", { reason, message });
+      return {
+        ok: false,
+        skipped: false,
+        reason,
+        error: message
+      };
+    })
+    .finally(() => {
+      apiSnapshotRefreshInFlight = null;
+    });
+
+  return apiSnapshotRefreshInFlight;
+}
+
+function startApiSnapshotRefreshLoop() {
+  if (!isDatabaseEnabled()) {
+    return;
+  }
+
+  if (apiSnapshotRefreshTimer) {
+    return;
+  }
+
+  apiSnapshotRefreshTimer = setInterval(() => {
+    refreshApiInMemorySnapshots("interval").catch((error) => {
+      const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown refresh loop error"));
+      lastApiSnapshotRefreshError = message;
+      log("API snapshot refresh loop error", { message });
+    });
+  }, apiSnapshotRefreshIntervalMs);
+
+  if (typeof apiSnapshotRefreshTimer.unref === "function") {
+    apiSnapshotRefreshTimer.unref();
+  }
+
+  log("API snapshot refresh loop enabled", {
+    intervalMs: apiSnapshotRefreshIntervalMs
+  });
+}
+
+function stopApiSnapshotRefreshLoop() {
+  if (!apiSnapshotRefreshTimer) {
+    return;
+  }
+
+  clearInterval(apiSnapshotRefreshTimer);
+  apiSnapshotRefreshTimer = null;
+}
+
 export async function closeDatabaseConnections() {
   if (!databasePool) {
     return;
@@ -5842,6 +5972,7 @@ let shutdownInFlight = null;
 async function shutdownRuntime(exitCode = null) {
   if (!shutdownInFlight) {
     shutdownInFlight = (async () => {
+      stopApiSnapshotRefreshLoop();
       if (server.listening) {
         await new Promise((resolveClose) => {
           server.close(() => {
@@ -5868,6 +5999,8 @@ async function startApiServer() {
     const message = error instanceof Error ? error.message : "Unknown error";
     log("Announcement stores warm-up failed", { message });
   }
+
+  startApiSnapshotRefreshLoop();
 
   server.listen(port, "0.0.0.0", () => {
     log(`Listening on port ${port}`);

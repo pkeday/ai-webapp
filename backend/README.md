@@ -33,6 +33,7 @@ Production setup in this project (default):
 - `CRON_AI_MAX_ITEMS`: Optional override for AI max items in cron script.
 - `CRON_AI_RECENT_POOL`: Optional override for AI recent candidate pool in cron script.
 - `API_BASE_URL`: API URL used by legacy worker only.
+- `API_SNAPSHOT_REFRESH_INTERVAL_MS`: API in-memory snapshot refresh interval from Postgres (default: `60000`).
 - `WORKER_INTERVAL_SECONDS`: Legacy worker poll interval (default: `60`).
 - `WORKER_HEARTBEAT_SECONDS`: Legacy worker heartbeat interval (default: `20`).
 - `WORKER_REQUEST_TIMEOUT_MS`: Legacy worker request timeout (default: `180000`).
@@ -68,7 +69,7 @@ Production setup in this project (default):
 - `AI_SUGGESTIONS_STORAGE_FILE`: Path to category suggestion store.
 - `AI_PROMPT_LEARNING_MIN_EXAMPLES`: Min reviewed mismatches needed before adding a learned prompt rule (default: `2`).
 - `AI_PROMPT_LEARNING_MAX_RULES`: Max learned prompt rules injected into classifier system prompt (default: `8`).
-- `AI_MAX_ITEMS_PER_CRON`: Max dedup announcements sent to models per cron run (default: `40`).
+- `AI_MAX_ITEMS_PER_CRON`: Max dedup announcements sent to models per cron run (default: `120`).
 - `AI_ASYNC_CHUNK_SIZE`: Legacy async chunk size (used only if legacy endpoints are enabled in code).
 - `AI_ASYNC_MAX_LOOPS`: Legacy async loop limit (used only if legacy endpoints are enabled in code).
 - `AI_CLASSIFICATION_CONCURRENCY`: Parallel AI classification workers (default: `3`).
