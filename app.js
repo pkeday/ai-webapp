@@ -1890,6 +1890,10 @@ function getDedupAnnouncementKey(item) {
   return dedupAnnouncementKey || "";
 }
 
+function getNotificationsApiBase() {
+  return notificationsApiBaseFallback.replace(/\/$/, "");
+}
+
 async function fetchNotificationCategories() {
   const normalizePayload = (payload) =>
     Array.isArray(payload?.categories)
@@ -1898,20 +1902,20 @@ async function fetchNotificationCategories() {
           .filter((value) => Boolean(value))
       : [];
 
+  const notificationsBase = getNotificationsApiBase();
   try {
-    const payload = await apiFetch("/api/ai/categories");
+    const payload = await apiFetchFromBase("/api/ai/categories", notificationsBase, {});
     const categories = normalizePayload(payload);
     state.notifications.aiCategories = categories.length > 0 ? categories : [...fallbackAiCategories];
     return;
   } catch {
-    // Fall through to fallback base or static categories.
+    // Fall through to current base or static categories.
   }
 
   const currentBase = getApiBase();
-  const fallbackBase = notificationsApiBaseFallback.replace(/\/$/, "");
-  if (currentBase !== fallbackBase) {
+  if (currentBase !== notificationsBase) {
     try {
-      const payload = await apiFetchFromBase("/api/ai/categories", fallbackBase, {});
+      const payload = await apiFetch("/api/ai/categories");
       const categories = normalizePayload(payload);
       state.notifications.aiCategories = categories.length > 0 ? categories : [...fallbackAiCategories];
       return;
@@ -1964,18 +1968,19 @@ async function fetchNotificationSuggestions(options = {}) {
   let response = null;
   let requestError = null;
 
+  const notificationsBase = getNotificationsApiBase();
+
   try {
-    response = await apiFetch(endpoint);
+    response = await apiFetchFromBase(endpoint, notificationsBase, {});
   } catch (error) {
     requestError = error instanceof Error ? error : new Error("Unknown suggestion fetch error");
   }
 
   if (!response) {
     const currentBase = getApiBase();
-    const fallbackBase = notificationsApiBaseFallback.replace(/\/$/, "");
-    if (currentBase !== fallbackBase) {
+    if (currentBase !== notificationsBase) {
       try {
-        response = await apiFetchFromBase(endpoint, fallbackBase, {});
+        response = await apiFetch(endpoint);
       } catch (error) {
         const fallbackError = error instanceof Error ? error.message : "Unknown suggestion fallback error";
         const primary = requestError ? requestError.message : "";
@@ -2034,29 +2039,30 @@ async function submitNotificationSuggestion() {
 
   let response = null;
   let requestError = null;
+  const notificationsBase = getNotificationsApiBase();
+
   try {
-    response = await apiFetch("/api/ai/suggestions", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
+    response = await apiFetchFromBase(
+      "/api/ai/suggestions",
+      notificationsBase,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      },
+      false
+    );
   } catch (error) {
     requestError = error instanceof Error ? error : new Error("Unknown suggestion save error");
   }
 
   if (!response) {
     const currentBase = getApiBase();
-    const fallbackBase = notificationsApiBaseFallback.replace(/\/$/, "");
-    if (currentBase !== fallbackBase) {
+    if (currentBase !== notificationsBase) {
       try {
-        response = await apiFetchFromBase(
-          "/api/ai/suggestions",
-          fallbackBase,
-          {
-            method: "POST",
-            body: JSON.stringify(payload)
-          },
-          false
-        );
+        response = await apiFetch("/api/ai/suggestions", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
       } catch (error) {
         const fallbackError = error instanceof Error ? error.message : "Unknown suggestion fallback error";
         const primary = requestError ? requestError.message : "";
@@ -2085,7 +2091,8 @@ async function submitNotificationSuggestion() {
   state.notifications.suggestionsLoaded = true;
   state.notifications.suggestionsError = "";
   state.notifications.suggestionSaving = false;
-  state.notifications.suggestionFeedback = "Suggestion saved.";
+  const savedId = String(savedRecord?.id ?? "").trim();
+  state.notifications.suggestionFeedback = savedId ? `Suggestion saved (ID: ${savedId}).` : "Suggestion saved.";
   if (refs.notificationsSuggestionComment) {
     refs.notificationsSuggestionComment.value = "";
   }
@@ -2112,28 +2119,29 @@ async function saveQueuedNotificationReviews() {
     let response = null;
     let requestError = null;
 
+    const notificationsBase = getNotificationsApiBase();
+
     try {
-      response = await apiFetch("/api/ai/reviews/bulk", {
-        method: "POST",
-        body: requestBody
-      });
+      response = await apiFetchFromBase(
+        "/api/ai/reviews/bulk",
+        notificationsBase,
+        {
+          method: "POST",
+          body: requestBody
+        },
+        false
+      );
     } catch (error) {
       requestError = error instanceof Error ? error : new Error("Unknown save error");
     }
 
     if (!response) {
       const currentBase = getApiBase();
-      const fallbackBase = notificationsApiBaseFallback.replace(/\/$/, "");
-      if (currentBase !== fallbackBase) {
-        response = await apiFetchFromBase(
-          "/api/ai/reviews/bulk",
-          fallbackBase,
-          {
-            method: "POST",
-            body: requestBody
-          },
-          false
-        );
+      if (currentBase !== notificationsBase) {
+        response = await apiFetch("/api/ai/reviews/bulk", {
+          method: "POST",
+          body: requestBody
+        });
       } else if (requestError) {
         throw requestError;
       }

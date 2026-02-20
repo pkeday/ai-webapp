@@ -52,7 +52,7 @@ const aiSuggestionsStoragePath = resolve(
 );
 const aiCriteriaVersion = process.env.AI_CRITERIA_VERSION ?? "v2";
 const aiClassifierEnabled = normalizeText(process.env.AI_CLASSIFIER_ENABLED ?? "false").toLowerCase() === "true";
-const aiPromptLearningMinExamples = Number.parseInt(process.env.AI_PROMPT_LEARNING_MIN_EXAMPLES ?? "2", 10);
+const aiPromptLearningMinExamples = Number.parseInt(process.env.AI_PROMPT_LEARNING_MIN_EXAMPLES ?? "1", 10);
 const aiPromptLearningMaxRules = Number.parseInt(process.env.AI_PROMPT_LEARNING_MAX_RULES ?? "8", 10);
 const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "120", 10);
 const aiConcurrency = Number.parseInt(process.env.AI_CLASSIFICATION_CONCURRENCY ?? "2", 10);
@@ -302,6 +302,7 @@ const aiManualPromptRules = [
   "Use earning_call_registration only when the meeting/call is explicitly tied to discussion of quarterly/annual financial results or earnings performance.",
   "Letters to shareholders/CEO narrative updates remain others even if they casually mention rescheduling a call; do not classify these as analyst_meeting unless the primary document purpose is a formal analyst/investor meet notice.",
   "For continuation updates that reference prior intimations and forward a material-subsidiary disclosure tied to a strategic transaction context, prefer ma (or divestment if the text indicates disposal/loss of control) instead of others.",
+  "If the update mentions transaction-progress regulators/approvals (for example Competition Commission of India/CCI, combination approval, scheme sanction, merger or acquisition closing steps), classify as ma unless it clearly indicates disposal or loss of control (then divestment).",
   "Use substantial_transaction only for sizeable holding changes by non-promoter/non-insider investors; promoter/KMP/insider trades stay in insider_trading or share_pledge as applicable.",
   "Use change_in_auditor for statutory/secretarial auditor appointment, resignation, removal, cessation or replacement disclosures."
 ];
@@ -360,7 +361,7 @@ function applyCorsHeaders(req, res) {
   }
 
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-cron-secret");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-cron-secret");
 }
 
 function sendJson(req, res, statusCode, payload) {
@@ -1777,6 +1778,53 @@ function buildAiReviewDiagnostics() {
     topMismatches,
     learnedRules
   };
+}
+
+function getReviewMismatchReplayKeys(maxKeys = 25) {
+  const limit = Math.max(1, Math.min(500, normalizePositiveInt(maxKeys, 25)));
+  const sortedReviews = [...aiReviewStore.records].sort(
+    (left, right) => (parseTimestampToMillis(right?.reviewedAt) ?? 0) - (parseTimestampToMillis(left?.reviewedAt) ?? 0)
+  );
+  const replayKeys = [];
+  const seen = new Set();
+
+  for (const reviewRecord of sortedReviews) {
+    if (replayKeys.length >= limit) {
+      break;
+    }
+
+    const key = normalizeAnnouncementKey(reviewRecord?.dedupAnnouncementKey);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    const reviewedLabel = normalizeAiCategory(reviewRecord?.reviewedLabel);
+    if (!aiCategorySet.has(reviewedLabel)) {
+      continue;
+    }
+
+    const aiRecord = getAiLabelRecordForKey(key);
+    if (!aiRecord || normalizeText(aiRecord?.status).toUpperCase() !== "SUCCESS") {
+      continue;
+    }
+
+    const aiLabel = normalizeAiCategory(aiRecord?.label);
+    if (!aiCategorySet.has(aiLabel) || aiLabel === reviewedLabel) {
+      continue;
+    }
+
+    const reviewedAtMs = parseTimestampToMillis(reviewRecord?.reviewedAt);
+    const aiUpdatedAtMs = parseTimestampToMillis(aiRecord?.updatedAt);
+    if (reviewedAtMs && aiUpdatedAtMs && aiUpdatedAtMs > reviewedAtMs) {
+      // This correction has already been replayed against AI after the latest human review.
+      continue;
+    }
+
+    replayKeys.push(key);
+    seen.add(key);
+  }
+
+  return replayKeys;
 }
 
 function indexAiLabelStore() {
@@ -4510,7 +4558,7 @@ async function handleCreateAiSuggestion(req, res) {
 
   const suggestedCategory = normalizeSuggestionCategory(body?.suggestedCategory ?? body?.category);
   const comment = normalizeText(body?.comment ?? body?.notes).slice(0, 3000);
-  if (!suggestedCategory || suggestedCategory.length < 3) {
+  if (!suggestedCategory) {
     sendJson(req, res, 400, { error: "Field 'suggestedCategory' is required." });
     return;
   }
