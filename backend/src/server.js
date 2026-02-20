@@ -4909,7 +4909,14 @@ async function runDerivedSyncStage(trigger, hasNewSourceRows) {
   };
 }
 
-async function runAiClassificationStage(trigger, dedupResult) {
+async function runAiClassificationStage(trigger, dedupResult, options = {}) {
+  const forceEnabled = options?.forceEnabled === true;
+  const maxItemsRaw = Number.parseInt(String(options?.maxItems ?? ""), 10);
+  const maxItems = Number.isFinite(maxItemsRaw) && maxItemsRaw > 0 ? maxItemsRaw : null;
+  const scanRecentWhenNoTouched = options?.scanRecentWhenNoTouched === true;
+  const recentPoolRaw = Number.parseInt(String(options?.recentCandidatePool ?? ""), 10);
+  const recentCandidatePool = Number.isFinite(recentPoolRaw) && recentPoolRaw > 0 ? recentPoolRaw : null;
+
   if (dedupResult.status !== "fulfilled") {
     return {
       status: "fulfilled",
@@ -4924,7 +4931,7 @@ async function runAiClassificationStage(trigger, dedupResult) {
     };
   }
 
-  if (!aiClassifierEnabled) {
+  if (!aiClassifierEnabled && !forceEnabled) {
     return {
       status: "fulfilled",
       value: {
@@ -4940,7 +4947,10 @@ async function runAiClassificationStage(trigger, dedupResult) {
 
   const touchedDedupKeys = Array.isArray(dedupResult.value?.touchedDedupKeys) ? dedupResult.value.touchedDedupKeys : [];
   return runAiClassificationCron(trigger, touchedDedupKeys, {
-    forceEnabled: false
+    forceEnabled,
+    maxItems,
+    scanRecentWhenNoTouched,
+    recentCandidatePool
   })
     .then((value) => ({ status: "fulfilled", value }))
     .catch((reason) => ({ status: "rejected", reason }));
@@ -5079,6 +5089,12 @@ async function handleCronRun(req, res) {
   const body = await readJsonBody(req);
   const trigger = String(body.trigger ?? "unknown");
   const forceRun = body?.force === true || normalizeText(body?.force).toLowerCase() === "true";
+  const aiConfig = parseAiRequestConfig(body, {
+    forceEnabled: false,
+    asyncEnabled: false
+  });
+  const manualAiBackfillRequested =
+    aiConfig.forceEnabled || aiConfig.maxItems !== null || aiConfig.recentCandidatePool !== null;
 
   cronRunCount += 1;
   lastCronRunAt = new Date().toISOString();
@@ -5088,6 +5104,12 @@ async function handleCronRun(req, res) {
     runCount: cronRunCount,
     trigger,
     forceRun,
+    aiConfig: {
+      forceEnabled: aiConfig.forceEnabled,
+      maxItems: aiConfig.maxItems,
+      recentCandidatePool: aiConfig.recentCandidatePool,
+      manualBackfill: manualAiBackfillRequested
+    },
     cronWindow
   });
 
@@ -5139,7 +5161,12 @@ async function handleCronRun(req, res) {
 
   const sourceStage = await runSourceSyncStage(trigger);
   const { combinedResult, dedupResult } = await runDerivedSyncStage(trigger, sourceStage.hasNewSourceRows);
-  const aiClassificationResult = await runAiClassificationStage(trigger, dedupResult);
+  const aiClassificationResult = await runAiClassificationStage(trigger, dedupResult, {
+    forceEnabled: aiConfig.forceEnabled,
+    maxItems: aiConfig.maxItems,
+    scanRecentWhenNoTouched: manualAiBackfillRequested,
+    recentCandidatePool: aiConfig.recentCandidatePool
+  });
 
   const responsePayload = {
     ok:
