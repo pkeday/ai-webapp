@@ -59,13 +59,14 @@ const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "
 const aiConcurrency = Number.parseInt(process.env.AI_CLASSIFICATION_CONCURRENCY ?? "2", 10);
 const aiClassificationBatchSize = Number.parseInt(process.env.AI_CLASSIFICATION_BATCH_SIZE ?? "8", 10);
 const aiMaxRssMb = Number.parseInt(process.env.AI_MAX_RSS_MB ?? "420", 10);
-const aiPersistCheckpointEvery = Number.parseInt(process.env.AI_PERSIST_CHECKPOINT_EVERY ?? "5", 10);
+const aiPersistCheckpointEvery = Number.parseInt(process.env.AI_PERSIST_CHECKPOINT_EVERY ?? "20", 10);
 const aiPendingBacklogShare = Number.parseFloat(process.env.AI_PENDING_BACKLOG_SHARE ?? "0.75");
 const aiPdfFetchTimeoutMs = Number.parseInt(process.env.AI_PDF_FETCH_TIMEOUT_MS ?? "30000", 10);
 const aiPdfFetchMaxAttempts = Number.parseInt(process.env.AI_PDF_FETCH_MAX_ATTEMPTS ?? "3", 10);
 const aiPdfParseMaxAttempts = Number.parseInt(process.env.AI_PDF_PARSE_MAX_ATTEMPTS ?? "2", 10);
 const aiPdfRetryDelayMs = Number.parseInt(process.env.AI_PDF_RETRY_DELAY_MS ?? "1200", 10);
 const aiPdfMinBytes = Number.parseInt(process.env.AI_PDF_MIN_BYTES ?? "1024", 10);
+const aiGeminiMaxPdfBytes = Number.parseInt(process.env.AI_GEMINI_MAX_PDF_BYTES ?? "12582912", 10);
 const aiPrimaryMaxPages = Number.parseInt(process.env.AI_PRIMARY_MAX_PAGES ?? "4", 10);
 const aiEscalationMaxPages = Number.parseInt(process.env.AI_ESCALATION_MAX_PAGES ?? "12", 10);
 const aiEscalationConfidenceThreshold = Number.parseFloat(process.env.AI_ESCALATION_CONFIDENCE_THRESHOLD ?? "0.8");
@@ -2527,59 +2528,95 @@ async function extractTextFromPdfPages(pdfBuffer, maxPages) {
   try {
     document = await loadingTask.promise;
   } catch (error) {
+    try {
+      loadingTask.destroy?.();
+    } catch {
+      // Best-effort cleanup.
+    }
     throw createAiPipelineError("parse_failed", `Failed to load PDF: ${sanitizeSensitiveText(error?.message || String(error))}`, {
       transient: true
     });
   }
 
-  const totalPages = document.numPages;
-  if (!Number.isFinite(totalPages) || totalPages < 1) {
-    throw createAiPipelineError("page_invalid", "PDF has no pages", { transient: true });
-  }
-
-  const safeMaxPages = Math.max(1, normalizePositiveInt(maxPages, 4));
-  const pagesToProcess = Math.min(totalPages, safeMaxPages);
-  const pageTexts = [];
-
-  for (let pageNumber = 1; pageNumber <= pagesToProcess; pageNumber += 1) {
-    let page;
-    try {
-      page = await document.getPage(pageNumber);
-    } catch (error) {
-      throw createAiPipelineError(
-        "page_invalid",
-        `Invalid page request while extracting text (page ${pageNumber} of ${totalPages}): ${sanitizeSensitiveText(
-          error?.message || String(error)
-        )}`,
-        { transient: true }
-      );
+  try {
+    const totalPages = document.numPages;
+    if (!Number.isFinite(totalPages) || totalPages < 1) {
+      throw createAiPipelineError("page_invalid", "PDF has no pages", { transient: true });
     }
 
-    let textContent;
-    try {
-      textContent = await page.getTextContent();
-    } catch (error) {
-      throw createAiPipelineError("parse_failed", `Failed to extract text from PDF: ${sanitizeSensitiveText(error?.message || String(error))}`, {
-        transient: true
-      });
+    const safeMaxPages = Math.max(1, normalizePositiveInt(maxPages, 4));
+    const pagesToProcess = Math.min(totalPages, safeMaxPages);
+    const pageTexts = [];
+
+    for (let pageNumber = 1; pageNumber <= pagesToProcess; pageNumber += 1) {
+      let page;
+      try {
+        page = await document.getPage(pageNumber);
+      } catch (error) {
+        throw createAiPipelineError(
+          "page_invalid",
+          `Invalid page request while extracting text (page ${pageNumber} of ${totalPages}): ${sanitizeSensitiveText(
+            error?.message || String(error)
+          )}`,
+          { transient: true }
+        );
+      }
+
+      let textContent;
+      try {
+        textContent = await page.getTextContent();
+      } catch (error) {
+        throw createAiPipelineError(
+          "parse_failed",
+          `Failed to extract text from PDF: ${sanitizeSensitiveText(error?.message || String(error))}`,
+          {
+            transient: true
+          }
+        );
+      } finally {
+        try {
+          page?.cleanup?.();
+        } catch {
+          // Best-effort cleanup.
+        }
+      }
+
+      const pageText = textContent.items
+        .map((item) => normalizeText(item?.str))
+        .filter(Boolean)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      pageTexts.push(pageText);
     }
 
-    const pageText = textContent.items
-      .map((item) => normalizeText(item?.str))
-      .filter(Boolean)
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-    pageTexts.push(pageText);
+    const combinedText = pageTexts.join("\n\n").trim();
+    return {
+      totalPages,
+      pagesProcessed: pagesToProcess,
+      text: combinedText,
+      textLength: combinedText.length
+    };
+  } finally {
+    try {
+      document?.cleanup?.();
+    } catch {
+      // Best-effort cleanup.
+    }
+    try {
+      const destroyResult = document?.destroy?.();
+      if (destroyResult && typeof destroyResult.then === "function") {
+        await destroyResult;
+      }
+    } catch {
+      // Best-effort cleanup.
+    }
+    try {
+      loadingTask.destroy?.();
+    } catch {
+      // Best-effort cleanup.
+    }
   }
-
-  const combinedText = pageTexts.join("\n\n").trim();
-  return {
-    totalPages,
-    pagesProcessed: pagesToProcess,
-    text: combinedText,
-    textLength: combinedText.length
-  };
 }
 
 async function preparePdfForClassification(attachmentUrl) {
@@ -2916,6 +2953,18 @@ async function classifyWithGeminiText(model, prompt, apiKey, baseUrl) {
 }
 
 async function classifyWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
+  const safeMaxPdfBytes = Math.max(1_048_576, normalizePositiveInt(aiGeminiMaxPdfBytes, 12 * 1024 * 1024));
+  if (!Buffer.isBuffer(pdfBytes) || pdfBytes.length < 256) {
+    throw createAiPipelineError("input_invalid", "Missing PDF bytes for Gemini classification", { transient: false });
+  }
+  if (pdfBytes.length > safeMaxPdfBytes) {
+    throw createAiPipelineError(
+      "input_invalid",
+      `PDF too large for Gemini inline upload (${pdfBytes.length} bytes > ${safeMaxPdfBytes} bytes)`,
+      { transient: false }
+    );
+  }
+
   return classifyWithGemini(model, prompt, apiKey, baseUrl, [
     {
       inlineData: {
@@ -2940,13 +2989,19 @@ async function classifyDedupAnnouncement(announcement) {
   }
 
   const preparedPdf = await preparePdfForClassification(attachmentUrl);
-  const pdfBuffer = preparedPdf.pdfBuffer;
+  let pdfBuffer = preparedPdf.pdfBuffer;
   const stage1Pdf = preparedPdf.stage1Pdf;
   const stage1Text = preparedPdf.stage1Text;
   const hasExtractedText = !preparedPdf.usedRawPdfFallback && stage1Text.textLength > 0;
   const machineReadable = hasExtractedText && stage1Text.textLength >= normalizePositiveInt(aiMinReadableChars, 700);
   const criteriaVersion = aiCriteriaVersion;
   const inputHash = buildAiInputHash(announcement, criteriaVersion);
+
+  // Keep peak RSS lower by dropping the full source PDF once text is extracted.
+  if (hasExtractedText) {
+    preparedPdf.pdfBuffer = null;
+    pdfBuffer = null;
+  }
 
   const stage1Prompt = buildClassificationUserPrompt(announcement, criteriaVersion, stage1Text.text);
   const stage1Errors = [];
@@ -3050,7 +3105,11 @@ async function classifyDedupAnnouncement(announcement) {
 
     if (machineReadable) {
       try {
-        stage2Pdf = await slicePdfToFirstPages(pdfBuffer, aiEscalationMaxPages);
+        const escalationFetched = await fetchBinary(attachmentUrl, aiPdfFetchTimeoutMs, {
+          browserLikeHeaders: true
+        });
+        const escalationPdfBuffer = escalationFetched.bytes;
+        stage2Pdf = await slicePdfToFirstPages(escalationPdfBuffer, aiEscalationMaxPages);
         pagesProcessed = stage2Pdf.pagesProcessed;
         stage2Text = await extractTextFromPdfPages(stage2Pdf.bytes, stage2Pdf.pagesProcessed);
       } catch (error) {
@@ -3061,7 +3120,7 @@ async function classifyDedupAnnouncement(announcement) {
       stage2Pdf = {
         totalPages: stage1Pdf.totalPages,
         pagesProcessed: stage1Pdf.pagesProcessed,
-        bytes: pdfBuffer
+        bytes: pdfBuffer ?? stage1Pdf.bytes
       };
       pagesProcessed = stage2Pdf.pagesProcessed;
     }
@@ -3159,6 +3218,8 @@ async function classifyDedupAnnouncement(announcement) {
 
     finalResult = await classifyWithStage2Chain();
   }
+
+  pdfBuffer = null;
 
   return {
     dedupAnnouncementKey,
@@ -3431,7 +3492,11 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     }
   };
 
-  const results = [];
+  let processedCount = 0;
+  let successCount = 0;
+  let failureCount = 0;
+  const failedKeys = [];
+  const failedSamples = [];
   const safeBatchSize = Math.max(1, Math.min(50, normalizePositiveInt(aiClassificationBatchSize, 8)));
   const safeMemoryLimitMb = Math.max(300, normalizePositiveInt(aiMaxRssMb, 420));
   const safeMemoryLimitBytes = safeMemoryLimitMb * 1024 * 1024;
@@ -3454,7 +3519,24 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
 
     const batch = queue.slice(offset, offset + safeBatchSize);
     const batchResults = await mapWithConcurrency(batch, normalizePositiveInt(aiConcurrency, 2), classifyQueueItem);
-    results.push(...batchResults);
+    for (const result of batchResults) {
+      processedCount += 1;
+      if (result?.ok) {
+        successCount += 1;
+        continue;
+      }
+      failureCount += 1;
+      if (result?.key) {
+        failedKeys.push(result.key);
+      }
+      if (failedSamples.length < 3) {
+        failedSamples.push({
+          key: result?.key,
+          error: sanitizeSensitiveText(result?.error || "Unknown classification failure"),
+          failureType: normalizeAiFailureType(result?.failureType)
+        });
+      }
+    }
 
     await scheduleCheckpointPersist(true);
 
@@ -3476,17 +3558,6 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
   await scheduleCheckpointPersist(true);
   await checkpointPersistChain;
 
-  const successCount = results.filter((result) => result.ok).length;
-  const failureCount = results.length - successCount;
-  const failedSamples = results
-    .filter((result) => !result.ok)
-    .slice(0, 3)
-    .map((result) => ({
-      key: result.key,
-      error: sanitizeSensitiveText(result.error || "Unknown classification failure"),
-      failureType: normalizeAiFailureType(result.failureType)
-    }));
-
   return {
     trigger,
     criteriaVersion: aiCriteriaVersion,
@@ -3498,16 +3569,16 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     queuedCount: queue.length,
     skippedExistingCount,
     concurrency: normalizePositiveInt(aiConcurrency, 2),
-    processedCount: results.length,
+    processedCount,
     successCount,
     failureCount,
     stoppedEarly,
     stopReason: stopReason || null,
-    remainingCount: Math.max(0, queue.length - results.length),
+    remainingCount: Math.max(0, queue.length - processedCount),
     peakRssMb,
     memoryGuardMb: safeMemoryLimitMb,
     batchSize: safeBatchSize,
-    failedKeys: results.filter((result) => !result.ok).map((result) => result.key).filter(Boolean),
+    failedKeys,
     failedSamples
   };
 }
