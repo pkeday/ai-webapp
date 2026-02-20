@@ -61,7 +61,7 @@ Production setup in this project (default):
 - `DEDUP_STORAGE_FILE`: Path to deduped NSE+BSE store (default: `data/dedup_announcements.json`).
 - `DEDUP_MAX_STORED`: Max deduped announcements retained (default: `10000`).
 - `PDF_HASH_TIMEOUT_MS`: Timeout used when downloading PDFs for hashing (default: `20000`).
-- `PDF_HASH_CONCURRENCY`: Parallel PDF hash workers during dedup rebuild (default: `4`).
+- `PDF_HASH_CONCURRENCY`: Parallel PDF hash workers during dedup rebuild (default: `2`).
 - `AI_CLASSIFIER_ENABLED`: Gate for AI classification (`true` to enable; default: `false`).
 - `AI_CRITERIA_VERSION`: Prompt/version tag used for idempotent reclassification (default: `v2`).
 - `AI_LABELS_STORAGE_FILE`: Path to AI label store (fallback when Postgres unavailable).
@@ -73,6 +73,8 @@ Production setup in this project (default):
 - `AI_ASYNC_CHUNK_SIZE`: Legacy async chunk size (used only if legacy endpoints are enabled in code).
 - `AI_ASYNC_MAX_LOOPS`: Legacy async loop limit (used only if legacy endpoints are enabled in code).
 - `AI_CLASSIFICATION_CONCURRENCY`: Parallel AI classification workers (default: `2`).
+- `AI_CLASSIFICATION_BATCH_SIZE`: Number of items processed per in-memory batch during AI stage (default: `8`).
+- `AI_MAX_RSS_MB`: In-process memory guard threshold for AI stage; run stops early before OOM when exceeded (default: `420`).
 - `AI_PDF_FETCH_TIMEOUT_MS`: Timeout for PDF download before classification (default: `30000`).
 - `AI_PDF_FETCH_MAX_ATTEMPTS`: Max PDF download attempts (default: `3`).
 - `AI_PDF_PARSE_MAX_ATTEMPTS`: Max parse attempts per fetched PDF (default: `2`).

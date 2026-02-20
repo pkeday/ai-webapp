@@ -44,7 +44,12 @@ async function main() {
     dedupTouched: result?.dedupSync?.touchedCount ?? null,
     aiProcessed: result?.aiClassification?.processedCount ?? null,
     aiSuccess: result?.aiClassification?.successCount ?? null,
-    aiFailed: result?.aiClassification?.failureCount ?? null
+    aiFailed: result?.aiClassification?.failureCount ?? null,
+    aiStoppedEarly: result?.aiClassification?.stoppedEarly ?? false,
+    aiStopReason: result?.aiClassification?.stopReason ?? null,
+    aiRemaining: result?.aiClassification?.remainingCount ?? null,
+    aiPeakRssMb: result?.aiClassification?.peakRssMb ?? null,
+    aiMemoryGuardMb: result?.aiClassification?.memoryGuardMb ?? null
   });
 
   if (!result.ok) {

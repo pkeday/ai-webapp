@@ -44,7 +44,7 @@ const dedupIncrementalLookbackHours = Number.parseInt(process.env.DEDUP_INCREMEN
 const dedupIncrementalMinCandidates = Number.parseInt(process.env.DEDUP_INCREMENTAL_MIN_CANDIDATES ?? "400", 10);
 const dedupIncrementalMaxCandidates = Number.parseInt(process.env.DEDUP_INCREMENTAL_MAX_CANDIDATES ?? "2500", 10);
 const pdfHashTimeoutMs = Number.parseInt(process.env.PDF_HASH_TIMEOUT_MS ?? "20000", 10);
-const pdfHashConcurrency = Number.parseInt(process.env.PDF_HASH_CONCURRENCY ?? "4", 10);
+const pdfHashConcurrency = Number.parseInt(process.env.PDF_HASH_CONCURRENCY ?? "2", 10);
 const aiLabelsStoragePath = resolve(process.cwd(), process.env.AI_LABELS_STORAGE_FILE ?? "data/announcement_ai_labels.json");
 const aiReviewsStoragePath = resolve(process.cwd(), process.env.AI_REVIEWS_STORAGE_FILE ?? "data/announcement_ai_reviews.json");
 const aiSuggestionsStoragePath = resolve(
@@ -57,6 +57,8 @@ const aiPromptLearningMinExamples = Number.parseInt(process.env.AI_PROMPT_LEARNI
 const aiPromptLearningMaxRules = Number.parseInt(process.env.AI_PROMPT_LEARNING_MAX_RULES ?? "8", 10);
 const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "60", 10);
 const aiConcurrency = Number.parseInt(process.env.AI_CLASSIFICATION_CONCURRENCY ?? "2", 10);
+const aiClassificationBatchSize = Number.parseInt(process.env.AI_CLASSIFICATION_BATCH_SIZE ?? "8", 10);
+const aiMaxRssMb = Number.parseInt(process.env.AI_MAX_RSS_MB ?? "420", 10);
 const aiPersistCheckpointEvery = Number.parseInt(process.env.AI_PERSIST_CHECKPOINT_EVERY ?? "5", 10);
 const aiPendingBacklogShare = Number.parseFloat(process.env.AI_PENDING_BACKLOG_SHARE ?? "0.75");
 const aiPdfFetchTimeoutMs = Number.parseInt(process.env.AI_PDF_FETCH_TIMEOUT_MS ?? "30000", 10);
@@ -3352,7 +3354,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     return checkpointPersistChain;
   };
 
-  const results = await mapWithConcurrency(queue, normalizePositiveInt(aiConcurrency, 2), async (announcement) => {
+  const classifyQueueItem = async (announcement) => {
     const dedupAnnouncementKey = normalizeAnnouncementKey(
       announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
     );
@@ -3388,7 +3390,49 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
       await scheduleCheckpointPersist(false);
       return { key: dedupAnnouncementKey, ok: false, error: failure.message, failureType: failure.failureType };
     }
-  });
+  };
+
+  const results = [];
+  const safeBatchSize = Math.max(1, Math.min(50, normalizePositiveInt(aiClassificationBatchSize, 8)));
+  const safeMemoryLimitMb = Math.max(300, normalizePositiveInt(aiMaxRssMb, 420));
+  const safeMemoryLimitBytes = safeMemoryLimitMb * 1024 * 1024;
+  let peakRssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+  let stoppedEarly = false;
+  let stopReason = "";
+
+  for (let offset = 0; offset < queue.length; offset += safeBatchSize) {
+    const beforeBatchRssBytes = process.memoryUsage().rss;
+    const beforeBatchRssMb = Math.round(beforeBatchRssBytes / (1024 * 1024));
+    if (beforeBatchRssMb > peakRssMb) {
+      peakRssMb = beforeBatchRssMb;
+    }
+
+    if (beforeBatchRssBytes >= safeMemoryLimitBytes) {
+      stoppedEarly = true;
+      stopReason = "memory-guard-before-batch";
+      break;
+    }
+
+    const batch = queue.slice(offset, offset + safeBatchSize);
+    const batchResults = await mapWithConcurrency(batch, normalizePositiveInt(aiConcurrency, 2), classifyQueueItem);
+    results.push(...batchResults);
+
+    await scheduleCheckpointPersist(true);
+
+    const afterBatchRssBytes = process.memoryUsage().rss;
+    const afterBatchRssMb = Math.round(afterBatchRssBytes / (1024 * 1024));
+    if (afterBatchRssMb > peakRssMb) {
+      peakRssMb = afterBatchRssMb;
+    }
+
+    if (afterBatchRssBytes >= safeMemoryLimitBytes) {
+      stoppedEarly = true;
+      stopReason = "memory-guard-after-batch";
+      break;
+    }
+
+    await sleep(0);
+  }
 
   await scheduleCheckpointPersist(true);
   await checkpointPersistChain;
@@ -3417,6 +3461,12 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     processedCount: results.length,
     successCount,
     failureCount,
+    stoppedEarly,
+    stopReason: stopReason || null,
+    remainingCount: Math.max(0, queue.length - results.length),
+    peakRssMb,
+    memoryGuardMb: safeMemoryLimitMb,
+    batchSize: safeBatchSize,
     failedKeys: results.filter((result) => !result.ok).map((result) => result.key).filter(Boolean),
     failedSamples
   };
