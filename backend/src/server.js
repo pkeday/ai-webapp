@@ -1991,15 +1991,54 @@ async function loadAiLabelStore() {
 
 async function persistAiLabelStore() {
   aiLabelStore.lastSyncAt = new Date().toISOString();
-  const payload = {
+  const basePayload = {
     updatedAt: aiLabelStore.lastSyncAt,
     criteriaVersion: aiCriteriaVersion,
     total: aiLabelStore.records.length,
     records: aiLabelStore.records
   };
+  let payload = basePayload;
 
   if (isDatabaseEnabled()) {
     try {
+      const existingPayload = await readSnapshotFromDatabase(databaseAiLabelSnapshotKey);
+      const existingRecords = Array.isArray(existingPayload?.records) ? existingPayload.records : [];
+      const mergedByIdentity = new Map();
+      const toIdentity = (record) => {
+        const key = normalizeAnnouncementKey(record?.dedupAnnouncementKey);
+        if (!key) {
+          return "";
+        }
+        const criteriaVersion = normalizeText(record?.criteriaVersion);
+        return `${key}::${criteriaVersion}`;
+      };
+      const getUpdatedAtMs = (record) => parseTimestampToMillis(record?.updatedAt) ?? 0;
+      const mergeRecord = (record) => {
+        const identity = toIdentity(record);
+        if (!identity) {
+          return;
+        }
+        const current = mergedByIdentity.get(identity);
+        if (!current || getUpdatedAtMs(record) >= getUpdatedAtMs(current)) {
+          mergedByIdentity.set(identity, record);
+        }
+      };
+
+      for (const record of existingRecords) {
+        mergeRecord(record);
+      }
+      for (const record of aiLabelStore.records) {
+        mergeRecord(record);
+      }
+
+      const mergedRecords = Array.from(mergedByIdentity.values());
+      payload = {
+        ...basePayload,
+        total: mergedRecords.length,
+        records: mergedRecords
+      };
+      aiLabelStore.records = mergedRecords;
+      indexAiLabelStore();
       await writeSnapshotToDatabase(databaseAiLabelSnapshotKey, payload);
     } catch (error) {
       const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
