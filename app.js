@@ -2444,11 +2444,13 @@ async function apiFetchFromBase(endpoint, apiBase, options = {}, clearAuthOnUnau
     request.body = options.body;
   }
 
-  if (state.auth.token) {
+  const notificationsBase = notificationsApiBaseFallback.replace(/\/$/, "");
+  const normalizedBase = String(apiBase || "").replace(/\/$/, "");
+  const shouldAttachAuth = Boolean(state.auth.token) && normalizedBase !== notificationsBase;
+  if (shouldAttachAuth) {
     request.headers.Authorization = `Bearer ${state.auth.token}`;
   }
 
-  const normalizedBase = String(apiBase || "").replace(/\/$/, "");
   const response = await fetch(`${normalizedBase}${endpoint}`, request);
   const payload = await response.json().catch(() => ({}));
 
