@@ -1557,6 +1557,14 @@ async function handlePutGmailPreferences(req, res, auth) {
 async function runGmailIngestForUser(params) {
   const nowEpoch = Math.floor(Date.now() / 1000);
   const labelIds = sanitizeLabelList(params.labelIds ?? params.prefs.trackedLabelIds);
+  const trackedLabelIds = sanitizeLabelList(params.prefs.trackedLabelIds);
+  const trackedLabelNames = sanitizeLabelList(params.prefs.trackedLabelNames);
+  const labelBrokerMap = new Map();
+  for (let index = 0; index < trackedLabelIds.length; index += 1) {
+    const labelId = trackedLabelIds[index];
+    const labelName = trackedLabelNames[index];
+    labelBrokerMap.set(labelId, labelName || labelId);
+  }
 
   if (labelIds.length === 0) {
     throw new Error("No tracked labels selected. Configure labels in Ingest setup.");
@@ -1597,15 +1605,19 @@ async function runGmailIngestForUser(params) {
 
     const from = getHeader(full.payload?.headers, "From");
     const sender = parseFromHeader(from);
-    const broker = detectBroker(`${from} ${sender.email}`, params.prefs.brokerMappings);
+    const messageLabelIds = Array.isArray(full.labelIds) ? full.labelIds.map((value) => String(value)) : [];
+    let broker = null;
+    for (const labelId of labelIds) {
+      if (messageLabelIds.includes(labelId)) {
+        broker = labelBrokerMap.get(labelId) || labelId;
+        break;
+      }
+    }
+    if (!broker) {
+      broker = detectBroker(`${from} ${sender.email}`, params.prefs.brokerMappings);
+    }
     const internalEpoch = Math.floor(Number(full.internalDate ?? Date.now()) / 1000);
     newestInternalEpoch = Math.max(newestInternalEpoch, internalEpoch);
-
-    if (broker === "Unmapped Broker" && !params.prefs.includeUnmapped) {
-      skippedCount += 1;
-      skippedUnmappedCount += 1;
-      continue;
-    }
 
     const archived = await archiveGmailMessage(params.user, full, raw, includeAttachments, accessToken, broker);
 
