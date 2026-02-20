@@ -201,6 +201,7 @@ const state = {
     scheduleEnabled: true,
     scheduleTime: "07:30",
     scheduleTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata",
+    includeUnmapped: true,
     startFromNow: true,
     resetCursor: false,
     statusMessage: ""
@@ -290,6 +291,7 @@ const refs = {
   ingestSetupMaxResults: document.getElementById("ingest-setup-max-results"),
   ingestSetupTime: document.getElementById("ingest-setup-time"),
   ingestSetupTimezone: document.getElementById("ingest-setup-timezone"),
+  ingestSetupIncludeUnmapped: document.getElementById("ingest-setup-include-unmapped"),
   ingestSetupStartNow: document.getElementById("ingest-setup-start-now"),
   ingestSetupResetCursor: document.getElementById("ingest-setup-reset-cursor"),
   ingestSetupLabels: document.getElementById("ingest-setup-labels"),
@@ -498,11 +500,16 @@ function bindEvents() {
       const fetchedCount = Number(summary.fetchedMessages || 0);
       const archivedCount = Number(summary.archivedCount || 0);
       const skippedCount = Number(summary.skippedCount || 0);
+      const skippedUnmappedCount = Number(summary.skippedUnmappedCount || 0);
       const cursorAfter = Number(summary.cursorAfterEpoch || 0);
       const cursorLabel = cursorAfter > 0 ? new Date(cursorAfter * 1000).toLocaleString() : "not set";
       if (fetchedCount === 0) {
         setPipelineMessage(
           `Ingest complete: fetched 0 messages. Cursor is ${cursorLabel}. If you expected older emails, open Ingest setup and check "Backfill older emails (reset cursor to oldest)".`
+        );
+      } else if (archivedCount === 0 && skippedUnmappedCount === fetchedCount) {
+        setPipelineMessage(
+          `Ingest fetched ${fetchedCount}, but all were unmapped and skipped. I did not advance cursor. Open Ingest setup and enable "Include unmapped senders", then run ingest again.`
         );
       } else {
         setPipelineMessage(
@@ -1625,6 +1632,7 @@ async function loadIngestSetupData(fetchLabels = true) {
   state.ingestSetup.scheduleTimezone = String(
     prefs.scheduleTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata"
   );
+  state.ingestSetup.includeUnmapped = prefs.includeUnmapped === true;
   state.ingestSetup.startFromNow = false;
   state.ingestSetup.resetCursor = false;
   state.ingestSetup.statusMessage = `Loaded ${labels.length} labels. ${trackedIds.length} currently tracked.`;
@@ -1641,6 +1649,7 @@ function renderIngestSetupModal() {
   refs.ingestSetupMaxResults.value = String(state.ingestSetup.maxResults || 30);
   refs.ingestSetupTime.value = state.ingestSetup.scheduleTime || "07:30";
   refs.ingestSetupTimezone.value = state.ingestSetup.scheduleTimezone || "Asia/Kolkata";
+  refs.ingestSetupIncludeUnmapped.checked = state.ingestSetup.includeUnmapped;
   refs.ingestSetupStartNow.checked = state.ingestSetup.startFromNow;
   refs.ingestSetupResetCursor.checked = state.ingestSetup.resetCursor;
   refs.ingestSetupSaveBtn.disabled = state.ingestSetup.saving || state.ingestSetup.loading;
@@ -1739,6 +1748,7 @@ async function saveIngestSetup() {
         maxResults: Math.max(1, Math.min(100, Number(refs.ingestSetupMaxResults.value || 30))),
         trackedLabelIds: selectedLabelIds,
         trackedLabelNames: selectedLabelNames,
+        includeUnmapped: refs.ingestSetupIncludeUnmapped.checked,
         scheduleEnabled: true,
         scheduleHour: scheduleTime.hour,
         scheduleMinute: scheduleTime.minute,

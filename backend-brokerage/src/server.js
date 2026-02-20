@@ -97,6 +97,11 @@ const defaultBrokerMappings = [
     broker: "Jefferies India",
     patterns: ["jefferies"],
     enabled: true
+  },
+  {
+    broker: "Emkay Global",
+    patterns: ["emkay", "@emkayglobal"],
+    enabled: true
   }
 ];
 
@@ -282,10 +287,7 @@ function normalizeGmailPreferencesEntry(entry) {
     maxResults: Math.max(1, Math.min(100, Number(entry?.maxResults ?? 25) || 25)),
     query: typeof entry?.query === "string" ? entry.query : "",
     includeUnmapped: entry?.includeUnmapped === true,
-    brokerMappings:
-      Array.isArray(entry?.brokerMappings) && entry.brokerMappings.length > 0
-        ? entry.brokerMappings
-        : structuredClone(defaultBrokerMappings),
+    brokerMappings: mergeBrokerMappingsWithDefaults(entry?.brokerMappings),
     trackedLabelIds: Array.isArray(entry?.trackedLabelIds)
       ? entry.trackedLabelIds.map((value) => String(value).trim()).filter(Boolean)
       : [],
@@ -305,6 +307,34 @@ function normalizeGmailPreferencesEntry(entry) {
       typeof entry?.lastIngestAt === "string" && entry.lastIngestAt.trim() ? entry.lastIngestAt.trim() : null,
     updatedAt: typeof entry?.updatedAt === "string" ? entry.updatedAt : nowIso
   };
+}
+
+function mergeBrokerMappingsWithDefaults(mappings) {
+  const normalized = Array.isArray(mappings)
+    ? mappings
+        .filter((entry) => entry && typeof entry.broker === "string")
+        .map((entry) => ({
+          broker: entry.broker.trim() || "Unnamed Broker",
+          patterns: Array.isArray(entry.patterns)
+            ? entry.patterns.map((pattern) => String(pattern).trim()).filter(Boolean)
+            : [],
+          enabled: entry.enabled !== false
+        }))
+        .filter((entry) => entry.patterns.length > 0)
+    : [];
+
+  if (normalized.length === 0) {
+    return structuredClone(defaultBrokerMappings);
+  }
+
+  const knownBrokers = new Set(normalized.map((entry) => entry.broker.toLowerCase()));
+  for (const fallback of defaultBrokerMappings) {
+    if (!knownBrokers.has(fallback.broker.toLowerCase())) {
+      normalized.push(structuredClone(fallback));
+    }
+  }
+
+  return normalized;
 }
 
 function mergeDbDefaults(value) {
@@ -1500,24 +1530,12 @@ async function handlePutGmailPreferences(req, res, auth) {
   const resetCursorToNow = body.startFromNow === true;
   const resetCursorToStart = body.resetCursor === true;
 
-  let brokerMappings = prefs.brokerMappings;
-  if (Array.isArray(body.brokerMappings)) {
-    brokerMappings = body.brokerMappings
-      .filter((entry) => entry && typeof entry.broker === "string")
-      .map((entry) => ({
-        broker: entry.broker.trim() || "Unnamed Broker",
-        patterns: Array.isArray(entry.patterns)
-          ? entry.patterns.map((pattern) => String(pattern).trim()).filter(Boolean)
-          : [],
-        enabled: entry.enabled !== false
-      }))
-      .filter((entry) => entry.patterns.length > 0);
-  }
+  const brokerMappings = Array.isArray(body.brokerMappings) ? body.brokerMappings : prefs.brokerMappings;
 
   prefs.maxResults = Math.max(1, Math.min(100, Number.isFinite(maxResults) ? maxResults : 25));
   prefs.query = query;
   prefs.includeUnmapped = includeUnmapped;
-  prefs.brokerMappings = brokerMappings.length > 0 ? brokerMappings : structuredClone(defaultBrokerMappings);
+  prefs.brokerMappings = mergeBrokerMappingsWithDefaults(brokerMappings);
   prefs.trackedLabelIds = trackedLabelIds;
   prefs.trackedLabelNames = trackedLabelNames;
   prefs.scheduleEnabled = scheduleEnabled;
@@ -1601,7 +1619,10 @@ async function runGmailIngestForUser(params) {
     results.push(makeArchivePublicRecord(archived.record));
   }
 
-  params.prefs.lastIngestAfterEpoch = Math.max(startAfterEpoch, newestInternalEpoch, nowEpoch);
+  const skippedOnlyUnmapped = messages.length > 0 && archivedCount === 0 && skippedUnmappedCount === messages.length;
+  if (!skippedOnlyUnmapped) {
+    params.prefs.lastIngestAfterEpoch = Math.max(startAfterEpoch, newestInternalEpoch, nowEpoch);
+  }
   params.prefs.lastIngestAt = new Date().toISOString();
   params.prefs.updatedAt = new Date().toISOString();
 
@@ -1613,6 +1634,7 @@ async function runGmailIngestForUser(params) {
       archivedCount,
       skippedCount,
       skippedUnmappedCount,
+      cursorAdvanced: !skippedOnlyUnmapped,
       attachmentCount,
       trackedLabels: labelIds,
       cursorAfterEpoch: params.prefs.lastIngestAfterEpoch
