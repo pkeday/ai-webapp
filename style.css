@@ -2,23 +2,23 @@
   --bg: #ffffff;
   --paper: #ffffff;
   --surface: #ffffff;
-  --sidebar-bg: #0f2f27;
-  --sidebar-bg-soft: #143a31;
-  --sidebar-text: #d7e8e2;
-  --sidebar-text-muted: #9fc1b7;
-  --text: #14231f;
-  --muted: #58726a;
-  --text-soft: #58726a;
-  --line: #d6e2dd;
-  --line-strong: #b9cbc4;
-  --accent: #155842;
-  --accent-strong: #0e4534;
-  --accent-soft: #ebf5f1;
+  --sidebar-bg: #0d2e56;
+  --sidebar-bg-soft: #13437d;
+  --sidebar-text: #d8e8ff;
+  --sidebar-text-muted: #9ebbe3;
+  --text: #132238;
+  --muted: #5a7190;
+  --text-soft: #5a7190;
+  --line: #d4e0f0;
+  --line-strong: #b9cbe4;
+  --accent: #1f63c8;
+  --accent-strong: #174fa6;
+  --accent-soft: #eaf2ff;
   --danger-soft: #fff3f2;
   --danger-line: #e3bcbc;
-  --priority: #eef8f4;
+  --priority: #eef4ff;
   --ignore: #fff4f2;
-  --shadow: 0 10px 24px rgba(17, 43, 35, 0.06);
+  --shadow: 0 10px 24px rgba(18, 45, 87, 0.08);
   --radius: 8px;
 }
 
@@ -45,7 +45,7 @@ body {
 }
 
 .app-sidebar {
-  background: linear-gradient(180deg, var(--sidebar-bg) 0%, #0d261f 100%);
+  background: linear-gradient(180deg, var(--sidebar-bg) 0%, #0b2342 100%);
   color: var(--sidebar-text);
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   padding: 20px 14px;
@@ -162,7 +162,7 @@ body {
   position: absolute;
   inset: 0;
   border: 0;
-  background: rgba(8, 22, 18, 0.56);
+  background: rgba(7, 24, 46, 0.56);
   cursor: pointer;
 }
 
@@ -174,7 +174,7 @@ body {
   border-radius: 16px;
   border: 1px solid var(--line);
   background: #ffffff;
-  box-shadow: 0 24px 56px rgba(15, 33, 29, 0.26);
+  box-shadow: 0 24px 56px rgba(12, 35, 72, 0.26);
 }
 
 .modal-header {
@@ -237,7 +237,7 @@ body {
   overflow: auto;
   display: grid;
   gap: 8px;
-  background: #f8fbfa;
+  background: #f7faff;
 }
 
 .ingest-label-item {
@@ -278,8 +278,8 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  background: #fbfdfc;
-  color: #355047;
+  background: #f8fbff;
+  color: #3f5578;
   font-size: 12px;
 }
 
@@ -353,7 +353,7 @@ body {
   padding: 7px 11px;
   font-size: 12px;
   font-weight: 600;
-  color: #2e4a42;
+  color: #335077;
   cursor: pointer;
 }
 
@@ -435,7 +435,7 @@ input[type="checkbox"] {
   border-radius: 6px;
   padding: 5px 9px;
   background: #fff;
-  color: #3b544d;
+  color: #3b5378;
   font-size: 11px;
   display: inline-flex;
   align-items: center;
@@ -444,8 +444,8 @@ input[type="checkbox"] {
 
 .chip.priority {
   background: var(--priority);
-  border-color: #9bc4b3;
-  color: #1c4e3d;
+  border-color: #a8bfe4;
+  color: #234a8b;
 }
 
 .chip.ignore {
@@ -520,15 +520,15 @@ input[type="checkbox"] {
 }
 
 .lane.broker-1 header {
-  background: #2a6654;
+  background: #2a67c8;
 }
 
 .lane.broker-2 header {
-  background: #245847;
+  background: #2357ae;
 }
 
 .lane.broker-3 header {
-  background: #1f4a3c;
+  background: #1d4a96;
 }
 
 .lane-body {
@@ -563,27 +563,27 @@ input[type="checkbox"] {
   border-radius: 4px;
   padding: 3px 7px;
   border: 1px solid var(--line-strong);
-  color: #3f5951;
-  background: #f8fbfa;
+  color: #40567b;
+  background: #f7faff;
 }
 
 .tag.type-initiation {
-  background: #eff6f3;
-  border-color: #96b8ab;
-  color: #23483d;
+  background: #edf4ff;
+  border-color: #a9c1e8;
+  color: #2f528d;
 }
 
 .tag.type-results-update {
-  background: #e8f4ef;
-  border-color: #84b39f;
-  color: #184b3a;
+  background: #e8f1ff;
+  border-color: #9fb9e8;
+  color: #264e8a;
 }
 
 .tag.type-general-update,
 .tag.type-sector-update {
-  background: #f3f8f6;
-  border-color: #a5c1b8;
-  color: #2a5448;
+  background: #f0f6ff;
+  border-color: #b6c9e9;
+  color: #365787;
 }
 
 .tag.duplicate {
@@ -596,7 +596,7 @@ input[type="checkbox"] {
   margin: 0;
   font-size: 12px;
   line-height: 1.4;
-  color: #223631;
+  color: #263c5f;
 }
 
 .card-actions {
@@ -611,7 +611,7 @@ input[type="checkbox"] {
   border-radius: 6px;
   padding: 4px 8px;
   font-size: 10px;
-  color: #2a493f;
+  color: #2f4f82;
   text-decoration: none;
   background: #fff;
 }
@@ -621,7 +621,7 @@ input[type="checkbox"] {
   border-radius: var(--radius);
   padding: 14px;
   background: #fff;
-  color: #526a63;
+  color: #5a7295;
   font-size: 13px;
 }
 
@@ -648,7 +648,7 @@ input[type="checkbox"] {
 .panel header {
   padding: 11px 12px;
   border-bottom: 1px solid var(--line);
-  background: #fcfefd;
+  background: #f8fbff;
   font-size: 13px;
   font-weight: 700;
 }
@@ -689,8 +689,8 @@ input[type="checkbox"] {
 }
 
 .note.good {
-  background: #ecf7f2;
-  border-color: #a8cbbd;
+  background: #ecf3ff;
+  border-color: #adc2e4;
 }
 
 .note.warn {
@@ -726,18 +726,18 @@ input[type="checkbox"] {
 
 .data-table th,
 .data-table td {
-  border-bottom: 1px solid #e8efec;
+  border-bottom: 1px solid #e3ebf7;
   text-align: left;
   padding: 8px 6px;
   vertical-align: top;
 }
 
 .data-table th {
-  color: #4f6a61;
+  color: #5a7295;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.2px;
-  background: #fbfdfc;
+  background: #f8fbff;
 }
 
 #view-notifications .data-table td:nth-child(7) {
@@ -795,7 +795,7 @@ input[type="checkbox"] {
   border-radius: 6px;
   padding: 8px;
   font-size: 11px;
-  color: #4c655e;
+  color: #546f96;
   background: #fff;
 }
 
@@ -818,7 +818,7 @@ input[type="checkbox"] {
 
 .review-toolbar .note {
   margin: 0;
-  color: #325248;
+  color: #355984;
 }
 
 .suggestion-panel {
@@ -839,7 +839,7 @@ input[type="checkbox"] {
 
 .suggestion-meta {
   font-size: 11px;
-  color: #516860;
+  color: #5b7294;
 }
 
 .suggestion-grid {
@@ -853,7 +853,7 @@ input[type="checkbox"] {
   border-radius: 6px;
   padding: 8px;
   font-size: 11px;
-  color: #4c655e;
+  color: #546f96;
   background: #fff;
 }
 
@@ -897,13 +897,13 @@ input[type="checkbox"] {
 
 .suggestion-entry-head span {
   font-size: 11px;
-  color: #4f6a61;
+  color: #5a7295;
 }
 
 .suggestion-entry p {
   margin: 0;
   font-size: 12px;
-  color: #2d453e;
+  color: #304f78;
   line-height: 1.4;
 }
 
@@ -921,7 +921,7 @@ input[type="checkbox"] {
 
 .review-row-status {
   font-size: 11px;
-  color: #4f6a61;
+  color: #5a7295;
 }
 
 .table-pager {
@@ -938,7 +938,7 @@ input[type="checkbox"] {
 
 .page-label {
   font-size: 12px;
-  color: #4f6a61;
+  color: #5a7295;
   min-width: 110px;
   text-align: center;
 }
@@ -962,10 +962,10 @@ input[type="checkbox"] {
 
 .message-toast {
   margin-top: 8px;
-  border: 1px solid #b7d6c9;
+  border: 1px solid #a9c3ea;
   border-radius: 6px;
-  background: #edf8f2;
-  color: #1e4f3e;
+  background: #edf4ff;
+  color: #234b8e;
   padding: 8px;
   font-size: 12px;
 }
