@@ -2307,56 +2307,46 @@ async function fetchNotifications() {
     }
   }
 
-  try {
-    const fallbackFile =
-      exchange === "BSE"
-        ? "./backend/data/bse_announcements.json"
-        : exchange === "NSE+BSE"
-          ? "./backend/data/combined_announcements.json"
-          : exchange === "DEDUP"
-            ? "./backend/data/dedup_announcements.json"
-          : "./backend/data/nse_announcements.json";
-    const fallbackResponse = await fetch(fallbackFile, { cache: "no-store", signal });
-    if (!fallbackResponse.ok) {
-      throw new Error(`Fallback file not found (${fallbackResponse.status})`);
-    }
-
-    const fallbackPayload = await fallbackResponse.json();
-    const allItems = Array.isArray(fallbackPayload?.announcements) ? fallbackPayload.announcements : [];
-    const filteredItems = allItems.filter((item) => {
-      if (!fallbackSymbolMatch(item, exchange, symbol)) {
-        return false;
+  if (exchange !== "DEDUP") {
+    try {
+      const fallbackFile =
+        exchange === "BSE"
+          ? "./backend/data/bse_announcements.json"
+          : exchange === "NSE+BSE"
+            ? "./backend/data/combined_announcements.json"
+            : "./backend/data/nse_announcements.json";
+      const fallbackResponse = await fetch(fallbackFile, { cache: "no-store", signal });
+      if (!fallbackResponse.ok) {
+        throw new Error(`Fallback file not found (${fallbackResponse.status})`);
       }
-      if (exchange === "DEDUP") {
-        return matchesNotificationAiLabelFilter(item, aiLabelFilter);
-      }
-      return true;
-    });
-    const normalizedItems = filteredItems.map((item) => ({
-      ...item,
-      exchange: item.exchange || exchange
-    }));
-    const { syncAt, syncStats } = extractExchangeSync(fallbackPayload, exchange);
 
-    fallbackResult = {
-      items: normalizedItems.slice(offset, offset + limit),
-      total: normalizedItems.length,
-      page,
-      totalPages: Math.max(1, Math.ceil(normalizedItems.length / limit)),
-      lastSyncAt: syncAt,
-      lastSyncStats: syncStats,
-      source:
-        exchange === "NSE+BSE"
-          ? "bundled NSE+BSE snapshot (no dedup)"
-          : exchange === "DEDUP"
-            ? "bundled Dedup snapshot"
+      const fallbackPayload = await fallbackResponse.json();
+      const allItems = Array.isArray(fallbackPayload?.announcements) ? fallbackPayload.announcements : [];
+      const filteredItems = allItems.filter((item) => fallbackSymbolMatch(item, exchange, symbol));
+      const normalizedItems = filteredItems.map((item) => ({
+        ...item,
+        exchange: item.exchange || exchange
+      }));
+      const { syncAt, syncStats } = extractExchangeSync(fallbackPayload, exchange);
+
+      fallbackResult = {
+        items: normalizedItems.slice(offset, offset + limit),
+        total: normalizedItems.length,
+        page,
+        totalPages: Math.max(1, Math.ceil(normalizedItems.length / limit)),
+        lastSyncAt: syncAt,
+        lastSyncStats: syncStats,
+        source:
+          exchange === "NSE+BSE"
+            ? "bundled NSE+BSE snapshot (no dedup)"
             : `bundled ${exchange} snapshot`
-    };
-  } catch (error) {
-    if (error?.name === "AbortError" || requestSeq !== notificationsRequestSeq) {
-      return;
+      };
+    } catch (error) {
+      if (error?.name === "AbortError" || requestSeq !== notificationsRequestSeq) {
+        return;
+      }
+      fallbackError = error instanceof Error ? error.message : "Unknown fallback error";
     }
-    fallbackError = error instanceof Error ? error.message : "Unknown fallback error";
   }
 
   const apiLooksReady = apiResult && (apiResult.total > 0 || apiResult.lastSyncAt);
