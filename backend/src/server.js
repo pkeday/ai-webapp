@@ -225,7 +225,7 @@ const aiClassificationCategories = [
 const aiCategoryDefinitions = {
   earnings_results_boardmeeting: "Filed financial results with actual statements approved by board.",
   results_intimation_date: "Notice of board meeting date to consider/approve results.",
-  earning_call_registration: "Earnings/results discussion call or meeting schedule.",
+  earning_call_registration: "Filing primarily about earnings/results call logistics or participation details.",
   earning_call_audio_recording: "Audio recording link/publication of earnings call.",
   earning_call_transcript: "Transcript publication of earnings call.",
   analyst_meeting: "1x1/small investor or analyst interaction, non-conference.",
@@ -237,7 +237,7 @@ const aiCategoryDefinitions = {
   press_release: "Document explicitly identified as press release.",
   auditors_report: "Auditor report/certificate on financial statements/results.",
   annual_report: "Comprehensive annual report publication.",
-  earning_presentation: "Investor presentation focused on financial results/business highlights.",
+  earning_presentation: "Investor presentation deck focused on financial results/business highlights.",
   ma: "Acquisition/merger/amalgamation or control increase.",
   divestment: "Sale/disposal/dilution resulting in reduced/lost control.",
   contract_awarded: "Order win/tender/contract award disclosure.",
@@ -302,7 +302,7 @@ const aiSystemPromptBaseSections = [
   "Prefer specific categories over others. Use others only as last resort.",
   "Priority rules:",
   "1) Newspaper publication mentions always map to newspaper_announcement.",
-  "2) Earnings-call scheduling/interaction about discussing results maps to earning_call_registration.",
+  "2) In overlapping cases, classify by the document's primary purpose, not by isolated keywords.",
   "3) Board meeting notice for approving results maps to results_intimation_date.",
   "4) Regulatory filing with approved financial statements maps to earnings_results_boardmeeting.",
   "5) 1x1, one-on-one, or investor meet without institutional host/conference name maps to analyst_meeting.",
@@ -316,7 +316,10 @@ const aiSystemPromptBaseSections = [
 ];
 const aiManualPromptRules = [
   "If the filing is a schedule/intimation of analyst or institutional investor meetings (one-on-one/group, physical/virtual), classify as analyst_meeting unless it explicitly states the interaction is an earnings/results call.",
-  "Use earning_call_registration only when the meeting/call is explicitly tied to discussion of quarterly/annual financial results or earnings performance.",
+  "Do not classify as earning_call_registration solely because terms like 'earnings call' or 'analyst call' appear in the text.",
+  "Use earning_call_registration only when the filing's primary purpose is call logistics or participation details (for example invite details, registration link, dial-in/webcast instructions, or meeting access details).",
+  "If the filing's primary purpose is publishing another artifact, classify by that artifact category instead of earning_call_registration (for example presentation deck, transcript, audio recording, or a status/administrative letter such as postponement/rescheduling context).",
+  "Treat examples as illustrative, not exhaustive; apply the same primary-purpose principle to similar contexts.",
   "Letters to shareholders/CEO narrative updates remain others even if they casually mention rescheduling a call; do not classify these as analyst_meeting unless the primary document purpose is a formal analyst/investor meet notice.",
   "For continuation updates that reference prior intimations and forward a material-subsidiary disclosure tied to a strategic transaction context, prefer ma (or divestment if the text indicates disposal/loss of control) instead of others.",
   "If the update mentions transaction-progress regulators/approvals (for example Competition Commission of India/CCI, combination approval, scheme sanction, merger or acquisition closing steps), classify as ma unless it clearly indicates disposal or loss of control (then divestment).",
