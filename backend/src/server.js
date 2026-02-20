@@ -57,6 +57,7 @@ const aiPromptLearningMaxRules = Number.parseInt(process.env.AI_PROMPT_LEARNING_
 const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "20", 10);
 const aiConcurrency = Number.parseInt(process.env.AI_CLASSIFICATION_CONCURRENCY ?? "2", 10);
 const aiPersistCheckpointEvery = Number.parseInt(process.env.AI_PERSIST_CHECKPOINT_EVERY ?? "5", 10);
+const aiPendingBacklogShare = Number.parseFloat(process.env.AI_PENDING_BACKLOG_SHARE ?? "0.4");
 const aiPdfFetchTimeoutMs = Number.parseInt(process.env.AI_PDF_FETCH_TIMEOUT_MS ?? "30000", 10);
 const aiPdfFetchMaxAttempts = Number.parseInt(process.env.AI_PDF_FETCH_MAX_ATTEMPTS ?? "3", 10);
 const aiPdfParseMaxAttempts = Number.parseInt(process.env.AI_PDF_PARSE_MAX_ATTEMPTS ?? "2", 10);
@@ -3130,9 +3131,15 @@ async function classifyDedupAnnouncement(announcement) {
 
 async function runAiClassificationCron(trigger, touchedDedupKeys = [], options = {}) {
   const forceEnabled = options?.forceEnabled === true;
+  const retryFailed = options?.retryFailed === true;
+  const includePendingBacklog = options?.includePendingBacklog !== false;
   const maxItemsOverrideRaw = Number.parseInt(String(options?.maxItems ?? ""), 10);
   const maxItemsOverride = Number.isFinite(maxItemsOverrideRaw) && maxItemsOverrideRaw > 0 ? maxItemsOverrideRaw : null;
   const scanRecentWhenNoTouched = options?.scanRecentWhenNoTouched === true;
+  const backlogShareRaw = Number.parseFloat(String(options?.backlogShare ?? ""));
+  const backlogShare = Number.isFinite(backlogShareRaw)
+    ? Math.max(0, Math.min(0.9, backlogShareRaw))
+    : Math.max(0, Math.min(0.9, Number.isFinite(aiPendingBacklogShare) ? aiPendingBacklogShare : 0.4));
   await Promise.all([loadAiLabelStore(), loadAiReviewStore()]);
 
   if (!aiClassifierEnabled && !forceEnabled) {
@@ -3190,20 +3197,30 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
   }
 
   const queue = [];
+  const consideredKeys = new Set();
   let skippedExistingCount = 0;
+  let backlogCandidateCount = 0;
+  const primaryQueueCap =
+    includePendingBacklog && candidates.length > 0
+      ? Math.max(1, Math.min(maxItems, Math.ceil(maxItems * (1 - backlogShare))))
+      : maxItems;
   const legacyFailureRetryWindowMs = normalizePositiveInt(aiFailureRetryHours, 24) * 60 * 60 * 1000;
   const transientFailureRetryWindowMs = Math.min(
     legacyFailureRetryWindowMs,
     normalizePositiveInt(aiTransientFailureRetryMinutes, 60) * 60 * 1000
   );
 
-  for (const item of candidates) {
+  const considerQueueCandidate = (item) => {
     const dedupAnnouncementKey = normalizeAnnouncementKey(
       item?.dedupAnnouncementKey ?? item?.mergedAnnouncementKey ?? item?.announcementKey
     );
     if (!dedupAnnouncementKey) {
-      continue;
+      return;
     }
+    if (consideredKeys.has(dedupAnnouncementKey)) {
+      return;
+    }
+    consideredKeys.add(dedupAnnouncementKey);
 
     const inputHash = buildAiInputHash(item, aiCriteriaVersion);
     const existingRecord = getAiLabelRecordForKey(dedupAnnouncementKey);
@@ -3214,31 +3231,34 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
       normalizeText(existingRecord.inputHash) === inputHash
     ) {
       skippedExistingCount += 1;
-      continue;
+      return;
     }
 
-    if (
-      !forceEnabled &&
-      existingRecord &&
-      existingRecord.status === "FAILED" &&
-      normalizeText(existingRecord.criteriaVersion) === aiCriteriaVersion &&
-      normalizeText(existingRecord.inputHash) === inputHash
-    ) {
+    if (existingRecord && existingRecord.status === "FAILED") {
+      if (
+        !retryFailed ||
+        normalizeText(existingRecord.criteriaVersion) !== aiCriteriaVersion ||
+        normalizeText(existingRecord.inputHash) !== inputHash
+      ) {
+        skippedExistingCount += 1;
+        return;
+      }
+
       const failureType = normalizeAiFailureType(existingRecord?.failureType);
       const retryable =
         typeof existingRecord?.retryable === "boolean"
           ? existingRecord.retryable
           : isTransientAiFailureType(failureType);
 
-      if (!retryable) {
+      if (!retryable && !forceEnabled) {
         skippedExistingCount += 1;
-        continue;
+        return;
       }
 
       const failedAtMs = parseTimestampToMillis(existingRecord.updatedAt);
-      if (failedAtMs && Date.now() - failedAtMs < transientFailureRetryWindowMs) {
+      if (!forceEnabled && failedAtMs && Date.now() - failedAtMs < transientFailureRetryWindowMs) {
         skippedExistingCount += 1;
-        continue;
+        return;
       }
     }
 
@@ -3250,12 +3270,33 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
         inputHash
       });
       skippedExistingCount += 1;
-      continue;
+      return;
     }
 
     queue.push(item);
-    if (queue.length >= maxItems) {
+  };
+
+  for (const item of candidates) {
+    if (queue.length >= primaryQueueCap) {
       break;
+    }
+    considerQueueCandidate(item);
+  }
+
+  if (includePendingBacklog && queue.length < maxItems) {
+    for (let index = stores.DEDUP.announcements.length - 1; index >= 0; index -= 1) {
+      if (queue.length >= maxItems) {
+        break;
+      }
+      const item = stores.DEDUP.announcements[index];
+      const dedupAnnouncementKey = normalizeAnnouncementKey(
+        item?.dedupAnnouncementKey ?? item?.mergedAnnouncementKey ?? item?.announcementKey
+      );
+      if (!dedupAnnouncementKey || consideredKeys.has(dedupAnnouncementKey)) {
+        continue;
+      }
+      backlogCandidateCount += 1;
+      considerQueueCandidate(item);
     }
   }
 
@@ -3268,7 +3309,9 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
       criteriaVersion: aiCriteriaVersion,
       forceEnabled,
       maxItems,
-      candidateCount: candidates.length,
+      candidateCount: consideredKeys.size,
+      primaryCandidateCount: candidates.length,
+      backlogCandidateCount,
       skippedExistingCount,
       processedCount: 0,
       successCount: 0,
@@ -3354,7 +3397,9 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     criteriaVersion: aiCriteriaVersion,
     forceEnabled,
     maxItems,
-    candidateCount: candidates.length,
+    candidateCount: consideredKeys.size,
+    primaryCandidateCount: candidates.length,
+    backlogCandidateCount,
     queuedCount: queue.length,
     skippedExistingCount,
     processedCount: results.length,
