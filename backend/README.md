@@ -1,4 +1,4 @@
-# Backend + Jobs
+# Backend + Jobs (Cron-Only Pipeline)
 
 This backend is intentionally dependency-light so it can run without extra setup.
 
@@ -6,15 +6,17 @@ This backend is intentionally dependency-light so it can run without extra setup
 
 ```bash
 npm start         # API server
-npm run worker    # long-running background worker (optional)
-npm run cron      # one-time cron execution
+npm run cron      # one-time cron execution (calls /api/jobs/daily)
+npm run worker    # legacy async worker (kept idle by hardcoded setting)
 npm run check     # syntax checks
 ```
 
-Production setup in this project:
+Production setup in this project (default):
 - API runs on Render web service.
 - Cron trigger runs via GitHub Actions schedule and calls `POST /api/jobs/daily`.
-- Worker script is available for future always-on background processing.
+- Pipeline executes in-order inside the cron route: `NSE/BSE ingest -> dedup -> AI classify`.
+- Cron window is hardcoded to `09:00-21:00` (`Asia/Kolkata`).
+- Legacy worker/AI-only endpoints are hardcoded off.
 
 ## Important env vars
 
@@ -22,6 +24,12 @@ Production setup in this project:
 - `CORS_ORIGIN`: Comma-separated allowed frontend origins.
 - `CRON_SECRET`: Shared secret for worker/cron protected API routes.
 - `API_BASE_URL`: API URL used by worker/cron scripts.
+- `WORKER_INTERVAL_SECONDS`: Legacy worker poll interval (default: `60`).
+- `WORKER_HEARTBEAT_SECONDS`: Legacy worker heartbeat interval (default: `20`).
+- `WORKER_REQUEST_TIMEOUT_MS`: Legacy worker request timeout (default: `180000`).
+- `WORKER_LOOP_DELAY_MS`: Legacy worker delay between chunks (default: `200`).
+- `WORKER_ID`: Optional static legacy worker identifier.
+- `WORKER_ALLOWED_JOB_TYPES`: Legacy worker job types (default: `ai-classification`).
 - `DATABASE_URL`: Postgres connection string for durable storage.
 - `DATABASE_SSL_MODE`: `require` in Render production, `disable` for local DB.
 - `DATABASE_MAX_CONNECTIONS`: PG pool max connections (default: `10`).
@@ -45,11 +53,15 @@ Production setup in this project:
 - `PDF_HASH_TIMEOUT_MS`: Timeout used when downloading PDFs for hashing (default: `20000`).
 - `PDF_HASH_CONCURRENCY`: Parallel PDF hash workers during dedup rebuild (default: `4`).
 - `AI_CLASSIFIER_ENABLED`: Gate for AI classification (`true` to enable; default: `false`).
-- `AI_CRITERIA_VERSION`: Prompt/version tag used for idempotent reclassification (default: `v1`).
+- `AI_CRITERIA_VERSION`: Prompt/version tag used for idempotent reclassification (default: `v2`).
+- `AI_LABELS_STORAGE_FILE`: Path to AI label store (fallback when Postgres unavailable).
 - `AI_REVIEWS_STORAGE_FILE`: Path to reviewer corrections store (default: `data/announcement_ai_reviews.json`).
+- `AI_SUGGESTIONS_STORAGE_FILE`: Path to category suggestion store.
 - `AI_PROMPT_LEARNING_MIN_EXAMPLES`: Min reviewed mismatches needed before adding a learned prompt rule (default: `2`).
 - `AI_PROMPT_LEARNING_MAX_RULES`: Max learned prompt rules injected into classifier system prompt (default: `8`).
 - `AI_MAX_ITEMS_PER_CRON`: Max dedup announcements sent to models per cron run (default: `120`).
+- `AI_ASYNC_CHUNK_SIZE`: Legacy async chunk size (used only if legacy endpoints are enabled in code).
+- `AI_ASYNC_MAX_LOOPS`: Legacy async loop limit (used only if legacy endpoints are enabled in code).
 - `AI_CLASSIFICATION_CONCURRENCY`: Parallel AI classification workers (default: `2`).
 - `AI_PDF_FETCH_TIMEOUT_MS`: Timeout for PDF download before classification (default: `30000`).
 - `AI_PDF_FETCH_MAX_ATTEMPTS`: Max PDF download attempts (default: `3`).
@@ -79,21 +91,31 @@ Production setup in this project:
 - `GET /api/notes`
 - `POST /api/notes` body `{ "text": "..." }`
 - `POST /api/jobs/daily` (optional secret in `x-cron-secret`)
-- `POST /api/jobs/ai-only` (optional secret in `x-cron-secret`)
-- `POST /api/internal/worker-heartbeat` (optional secret in `x-cron-secret`)
 - `GET /api/notifications/announcements?exchange=NSE|BSE|NSE+BSE|DEDUP|ALL&limit=100&symbol=TCS`
 - `GET /api/ai/categories`
 - `POST /api/ai/reviews/bulk` body `{ "reviews": [{ "dedupAnnouncementKey": "...", "reviewedLabel": "..." }] }`
 
+Legacy endpoints (disabled by default; require code change):
+- `POST /api/jobs/ai-only`
+- `GET /api/jobs`
+- `GET /api/jobs/:id`
+- `POST /api/internal/worker-heartbeat`
+- `POST /api/internal/jobs/claim`
+- `POST /api/internal/jobs/:id/heartbeat`
+- `POST /api/internal/jobs/:id/complete`
+- `POST /api/internal/jobs/:id/fail`
+- `POST /api/internal/ai/run-chunk`
+
 ## Notifications sync flow (NSE + BSE)
 
 - GitHub Actions triggers `POST /api/jobs/daily` on schedule.
-- Server fetches NSE and BSE corporate announcements in the same cron run.
+- Server fetches NSE and BSE corporate announcements in the same cron run (incremental append-only by announcement key).
 - BSE records are enriched with `isin` using BSE scrip master data (`ListofScripData` API) before storage.
 - New records are deduplicated per exchange and persisted to Postgres snapshot storage.
-- A separate combined union table (`exchange=NSE+BSE`) and dedup table (`exchange=DEDUP`) are persisted in Postgres and served via API.
+- Combined union table (`exchange=NSE+BSE`) and dedup table (`exchange=DEDUP`) are refreshed only when source stores changed.
+- AI classification runs after dedup refresh and targets new/changed dedup rows only.
 - If Postgres is unavailable, backend falls back to local JSON files (`NSE_STORAGE_FILE`, `BSE_STORAGE_FILE`, `COMBINED_STORAGE_FILE`, `DEDUP_STORAGE_FILE`, `AI_LABELS_STORAGE_FILE`, `AI_REVIEWS_STORAGE_FILE`).
-- If enabled, AI classification runs after dedup in the same cron run and stores per-announcement labels persistently.
+- AI labels persist in Postgres snapshot storage and are incrementally appended/updated by key.
 - Reviewed labels are stored separately and returned in Dedup API rows as `review_label`; reviewed mismatches are used to inject learned prompt guidance automatically in later AI runs.
-- For fast iteration/testing, `POST /api/jobs/ai-only` runs only AI classification over recent dedup announcements (no NSE/BSE refresh, no dedup rebuild).
+- Default cron window is `09:00` to `21:00` in `Asia/Kolkata`; runs outside window are skipped unless payload includes `"force": true`.
 - Notifications data is served via `GET /api/notifications/announcements`.

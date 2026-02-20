@@ -92,6 +92,16 @@ const databaseStoreSnapshotPrefix = "store:";
 const databaseAiLabelSnapshotKey = "ai-labels";
 const databaseAiReviewSnapshotKey = "ai-reviews";
 const databaseAiSuggestionSnapshotKey = "ai-suggestions";
+const databaseBackgroundJobsTable = "background_jobs";
+const backgroundJobTypeAiClassification = "ai-classification";
+const backgroundJobStatuses = new Set(["queued", "running", "completed", "failed"]);
+const aiAsyncChunkSizeDefault = Number.parseInt(process.env.AI_ASYNC_CHUNK_SIZE ?? "10", 10);
+const aiAsyncMaxLoopsDefault = Number.parseInt(process.env.AI_ASYNC_MAX_LOOPS ?? "120", 10);
+const cronWindowEnabled = true;
+const cronWindowTimezone = "Asia/Kolkata";
+const cronWindowStartHour = 9;
+const cronWindowEndHour = 21;
+const enableLegacyJobEndpoints = false;
 
 const notes = [];
 let noteId = 1;
@@ -99,6 +109,8 @@ let cronRunCount = 0;
 let lastCronRunAt = null;
 let aiOnlyRunCount = 0;
 let lastAiOnlyRunAt = null;
+let aiChunkRunCount = 0;
+let lastAiChunkRunAt = null;
 let workerHeartbeatCount = 0;
 let lastWorkerHeartbeatAt = null;
 
@@ -375,12 +387,103 @@ function normalizePositiveInt(value, fallback) {
   return Math.floor(value);
 }
 
+function normalizeNonNegativeInt(value, fallback = 0) {
+  if (!Number.isFinite(value) || value < 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
 function normalizeText(value) {
   if (value === null || value === undefined) {
     return "";
   }
 
   return String(value).trim();
+}
+
+function normalizeHourOfDay(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  if (parsed < 0 || parsed > 23) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function getTimePartsInTimezone(date, timeZone) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(date);
+    const hourPart = parts.find((part) => part.type === "hour")?.value ?? "00";
+    const minutePart = parts.find((part) => part.type === "minute")?.value ?? "00";
+    const hour = Number.parseInt(hourPart, 10);
+    const minute = Number.parseInt(minutePart, 10);
+    return {
+      hour: Number.isFinite(hour) ? hour : 0,
+      minute: Number.isFinite(minute) ? minute : 0
+    };
+  } catch {
+    return {
+      hour: date.getHours(),
+      minute: date.getMinutes()
+    };
+  }
+}
+
+function evaluateCronWindow(date = new Date()) {
+  const startHour = normalizeHourOfDay(cronWindowStartHour, 9);
+  const endHour = normalizeHourOfDay(cronWindowEndHour, 21);
+  const timeParts = getTimePartsInTimezone(date, cronWindowTimezone);
+  const minutesOfDay = timeParts.hour * 60 + timeParts.minute;
+  const startMinutes = startHour * 60;
+  const endMinutes = endHour * 60;
+  const wrapsMidnight = endMinutes < startMinutes;
+  const inWindow = wrapsMidnight
+    ? minutesOfDay >= startMinutes || minutesOfDay <= endMinutes
+    : minutesOfDay >= startMinutes && minutesOfDay <= endMinutes;
+  const windowEnabled = Boolean(cronWindowEnabled);
+
+  return {
+    enabled: windowEnabled,
+    timezone: cronWindowTimezone,
+    startHour,
+    endHour,
+    nowHour: timeParts.hour,
+    nowMinute: timeParts.minute,
+    nowMinutesOfDay: minutesOfDay,
+    withinWindow: windowEnabled ? inWindow : true
+  };
+}
+
+function buildLegacyEndpointDisabledPayload() {
+  return {
+    error: "Endpoint disabled. Use POST /api/jobs/daily only.",
+    mode: "cron-only",
+    enableAction: "Set `enableLegacyJobEndpoints = true` in backend/src/server.js"
+  };
+}
+
+function normalizeBackgroundJobType(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  if (normalized === backgroundJobTypeAiClassification) {
+    return normalized;
+  }
+  return "";
+}
+
+function normalizeBackgroundJobStatus(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  if (backgroundJobStatuses.has(normalized)) {
+    return normalized;
+  }
+  return "";
 }
 
 function normalizeApiKeySecret(value) {
@@ -490,8 +593,34 @@ async function ensureDatabaseReady() {
       )
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${databaseBackgroundJobsTable} (
+        id BIGSERIAL PRIMARY KEY,
+        job_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        result JSONB,
+        error TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 1,
+        worker_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        last_heartbeat_at TIMESTAMPTZ
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_background_jobs_status_created
+      ON ${databaseBackgroundJobsTable} (status, created_at)
+    `);
+
     databaseReady = true;
-    log("Postgres snapshot storage ready", { table: databaseSnapshotTable });
+    log("Postgres storage ready", {
+      snapshotTable: databaseSnapshotTable,
+      jobsTable: databaseBackgroundJobsTable
+    });
     return true;
   })()
     .catch((error) => {
@@ -555,6 +684,395 @@ async function writeSnapshotToDatabase(snapshotKey, payload) {
   );
 
   return true;
+}
+
+function normalizeBackgroundJobId(value) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function normalizeBackgroundJobPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {};
+  }
+  return payload;
+}
+
+function normalizeBackgroundJobRecord(row) {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  const id = normalizeBackgroundJobId(row.id);
+  const jobType = normalizeBackgroundJobType(row.job_type ?? row.jobType);
+  const status = normalizeBackgroundJobStatus(row.status);
+  if (!id || !jobType || !status) {
+    return null;
+  }
+
+  const attemptsRaw = Number.parseInt(String(row.attempts ?? "0"), 10);
+  const maxAttemptsRaw = Number.parseInt(String(row.max_attempts ?? row.maxAttempts ?? "1"), 10);
+  return {
+    id,
+    jobType,
+    status,
+    payload: normalizeBackgroundJobPayload(row.payload),
+    result: row.result && typeof row.result === "object" ? row.result : null,
+    error: sanitizeSensitiveText(row.error ?? ""),
+    attempts: normalizeNonNegativeInt(attemptsRaw, 0),
+    maxAttempts: Math.max(1, normalizePositiveInt(maxAttemptsRaw, 1)),
+    workerId: normalizeText(row.worker_id ?? row.workerId),
+    createdAt: normalizeText(row.created_at ?? row.createdAt),
+    updatedAt: normalizeText(row.updated_at ?? row.updatedAt),
+    startedAt: normalizeText(row.started_at ?? row.startedAt),
+    completedAt: normalizeText(row.completed_at ?? row.completedAt),
+    lastHeartbeatAt: normalizeText(row.last_heartbeat_at ?? row.lastHeartbeatAt)
+  };
+}
+
+async function createBackgroundJob(jobType, payload = {}, options = {}) {
+  if (!isDatabaseEnabled()) {
+    return null;
+  }
+
+  const normalizedType = normalizeBackgroundJobType(jobType);
+  if (!normalizedType) {
+    throw new Error(`Unsupported background job type: ${jobType}`);
+  }
+
+  const maxAttemptsRaw = Number.parseInt(String(options?.maxAttempts ?? "1"), 10);
+  const maxAttempts = Math.max(1, Math.min(10, normalizePositiveInt(maxAttemptsRaw, 1)));
+
+  await ensureDatabaseReady();
+  const pool = getDatabasePool();
+  if (!pool) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `
+      INSERT INTO ${databaseBackgroundJobsTable} (
+        job_type,
+        status,
+        payload,
+        max_attempts,
+        attempts,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, 'queued', $2::jsonb, $3, 0, NOW(), NOW())
+      RETURNING *
+    `,
+    [normalizedType, JSON.stringify(normalizeBackgroundJobPayload(payload)), maxAttempts]
+  );
+  return normalizeBackgroundJobRecord(result.rows[0]);
+}
+
+async function claimNextBackgroundJob(workerId = "", allowedTypes = []) {
+  if (!isDatabaseEnabled()) {
+    return null;
+  }
+
+  await ensureDatabaseReady();
+  const pool = getDatabasePool();
+  if (!pool) {
+    return null;
+  }
+
+  const normalizedWorkerId = normalizeText(workerId);
+  const normalizedTypes = (Array.isArray(allowedTypes) ? allowedTypes : [])
+    .map((value) => normalizeBackgroundJobType(value))
+    .filter(Boolean);
+  const params = [normalizedWorkerId || "worker"];
+  let typeFilterSql = "";
+  if (normalizedTypes.length > 0) {
+    params.push(normalizedTypes);
+    typeFilterSql = "AND job_type = ANY($2::text[])";
+  }
+
+  const result = await pool.query(
+    `
+      WITH next_job AS (
+        SELECT id
+        FROM ${databaseBackgroundJobsTable}
+        WHERE status = 'queued'
+          ${typeFilterSql}
+        ORDER BY created_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      )
+      UPDATE ${databaseBackgroundJobsTable} AS job
+      SET
+        status = 'running',
+        attempts = job.attempts + 1,
+        worker_id = $1,
+        started_at = COALESCE(job.started_at, NOW()),
+        updated_at = NOW(),
+        last_heartbeat_at = NOW()
+      FROM next_job
+      WHERE job.id = next_job.id
+      RETURNING job.*
+    `,
+    params
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+  return normalizeBackgroundJobRecord(result.rows[0]);
+}
+
+async function markBackgroundJobHeartbeat(jobId, workerId = "") {
+  if (!isDatabaseEnabled()) {
+    return null;
+  }
+
+  const normalizedId = normalizeBackgroundJobId(jobId);
+  if (!normalizedId) {
+    return null;
+  }
+
+  await ensureDatabaseReady();
+  const pool = getDatabasePool();
+  if (!pool) {
+    return null;
+  }
+
+  const normalizedWorkerId = normalizeText(workerId);
+  const result = await pool.query(
+    `
+      UPDATE ${databaseBackgroundJobsTable}
+      SET
+        last_heartbeat_at = NOW(),
+        updated_at = NOW()
+      WHERE id = $1
+        AND status = 'running'
+        AND ($2 = '' OR worker_id = $2)
+      RETURNING *
+    `,
+    [normalizedId, normalizedWorkerId]
+  );
+  if (result.rowCount === 0) {
+    return null;
+  }
+  return normalizeBackgroundJobRecord(result.rows[0]);
+}
+
+async function markBackgroundJobCompleted(jobId, resultPayload = {}, workerId = "") {
+  if (!isDatabaseEnabled()) {
+    return null;
+  }
+
+  const normalizedId = normalizeBackgroundJobId(jobId);
+  if (!normalizedId) {
+    return null;
+  }
+
+  await ensureDatabaseReady();
+  const pool = getDatabasePool();
+  if (!pool) {
+    return null;
+  }
+
+  const normalizedWorkerId = normalizeText(workerId);
+  const result = await pool.query(
+    `
+      UPDATE ${databaseBackgroundJobsTable}
+      SET
+        status = 'completed',
+        result = $2::jsonb,
+        error = '',
+        completed_at = NOW(),
+        updated_at = NOW(),
+        last_heartbeat_at = NOW()
+      WHERE id = $1
+        AND status = 'running'
+        AND ($3 = '' OR worker_id = $3)
+      RETURNING *
+    `,
+    [normalizedId, JSON.stringify(normalizeBackgroundJobPayload(resultPayload)), normalizedWorkerId]
+  );
+  if (result.rowCount === 0) {
+    return null;
+  }
+  return normalizeBackgroundJobRecord(result.rows[0]);
+}
+
+async function markBackgroundJobFailed(jobId, errorMessage = "", resultPayload = {}, workerId = "") {
+  if (!isDatabaseEnabled()) {
+    return null;
+  }
+
+  const normalizedId = normalizeBackgroundJobId(jobId);
+  if (!normalizedId) {
+    return null;
+  }
+
+  await ensureDatabaseReady();
+  const pool = getDatabasePool();
+  if (!pool) {
+    return null;
+  }
+
+  const normalizedWorkerId = normalizeText(workerId);
+  const sanitizedError = sanitizeSensitiveText(errorMessage || "Unknown background job failure");
+  const result = await pool.query(
+    `
+      UPDATE ${databaseBackgroundJobsTable}
+      SET
+        status = 'failed',
+        result = $2::jsonb,
+        error = $3,
+        completed_at = NOW(),
+        updated_at = NOW(),
+        last_heartbeat_at = NOW()
+      WHERE id = $1
+        AND status = 'running'
+        AND ($4 = '' OR worker_id = $4)
+      RETURNING *
+    `,
+    [normalizedId, JSON.stringify(normalizeBackgroundJobPayload(resultPayload)), sanitizedError, normalizedWorkerId]
+  );
+  if (result.rowCount === 0) {
+    return null;
+  }
+  return normalizeBackgroundJobRecord(result.rows[0]);
+}
+
+async function getBackgroundJobById(jobId) {
+  if (!isDatabaseEnabled()) {
+    return null;
+  }
+
+  const normalizedId = normalizeBackgroundJobId(jobId);
+  if (!normalizedId) {
+    return null;
+  }
+
+  await ensureDatabaseReady();
+  const pool = getDatabasePool();
+  if (!pool) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT *
+      FROM ${databaseBackgroundJobsTable}
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [normalizedId]
+  );
+  if (result.rowCount === 0) {
+    return null;
+  }
+  return normalizeBackgroundJobRecord(result.rows[0]);
+}
+
+async function listBackgroundJobs(options = {}) {
+  if (!isDatabaseEnabled()) {
+    return { jobs: [], total: 0, limit: 0, offset: 0 };
+  }
+
+  const statusFilter = normalizeBackgroundJobStatus(options?.status);
+  const typeFilter = normalizeBackgroundJobType(options?.jobType ?? options?.type);
+  const limitRaw = Number.parseInt(String(options?.limit ?? "50"), 10);
+  const offsetRaw = Number.parseInt(String(options?.offset ?? "0"), 10);
+  const limit = Math.min(Math.max(normalizePositiveInt(limitRaw, 50), 1), 500);
+  const offset = Math.max(0, normalizeNonNegativeInt(offsetRaw, 0));
+
+  await ensureDatabaseReady();
+  const pool = getDatabasePool();
+  if (!pool) {
+    return { jobs: [], total: 0, limit, offset };
+  }
+
+  const whereClauses = [];
+  const whereValues = [];
+  if (statusFilter) {
+    whereValues.push(statusFilter);
+    whereClauses.push(`status = $${whereValues.length}`);
+  }
+  if (typeFilter) {
+    whereValues.push(typeFilter);
+    whereClauses.push(`job_type = $${whereValues.length}`);
+  }
+  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+  const queryValues = [...whereValues];
+  queryValues.push(limit);
+  const limitParam = queryValues.length;
+  queryValues.push(offset);
+  const offsetParam = queryValues.length;
+
+  const jobsResult = await pool.query(
+    `
+      SELECT *
+      FROM ${databaseBackgroundJobsTable}
+      ${whereSql}
+      ORDER BY created_at DESC
+      LIMIT $${limitParam}
+      OFFSET $${offsetParam}
+    `,
+    queryValues
+  );
+
+  const totalResult = await pool.query(
+    `
+      SELECT COUNT(*) AS total_count
+      FROM ${databaseBackgroundJobsTable}
+      ${whereSql}
+    `,
+    whereValues
+  );
+
+  const total = Number.parseInt(String(totalResult.rows[0]?.total_count ?? "0"), 10);
+  return {
+    jobs: jobsResult.rows.map((row) => normalizeBackgroundJobRecord(row)).filter(Boolean),
+    total: Number.isFinite(total) ? total : 0,
+    limit,
+    offset
+  };
+}
+
+async function getBackgroundJobStatusCounts() {
+  if (!isDatabaseEnabled()) {
+    return null;
+  }
+
+  await ensureDatabaseReady();
+  const pool = getDatabasePool();
+  if (!pool) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT status, COUNT(*) AS total_count
+      FROM ${databaseBackgroundJobsTable}
+      GROUP BY status
+    `
+  );
+
+  const counts = {
+    queued: 0,
+    running: 0,
+    completed: 0,
+    failed: 0
+  };
+  for (const row of result.rows) {
+    const status = normalizeBackgroundJobStatus(row?.status);
+    if (!status) {
+      continue;
+    }
+    const count = Number.parseInt(String(row?.total_count ?? "0"), 10);
+    counts[status] = Number.isFinite(count) ? count : 0;
+  }
+  return counts;
 }
 
 function sleep(ms) {
@@ -4261,33 +4779,19 @@ async function handleGetAnnouncements(req, res, requestUrl) {
   });
 }
 
-async function handleCronRun(req, res) {
-  if (!requireCronSecret(req, res, "Invalid cron secret.")) {
-    return;
-  }
-
-  const body = await readJsonBody(req);
-  const trigger = String(body.trigger ?? "unknown");
-  const aiRequest = body?.ai && typeof body.ai === "object" ? body.ai : null;
-  const aiForceEnabled = Boolean(aiRequest?.enabled);
-  const aiMaxItemsRequestRaw = Number.parseInt(String(aiRequest?.maxItems ?? ""), 10);
-  const aiMaxItemsRequest = Number.isFinite(aiMaxItemsRequestRaw) && aiMaxItemsRequestRaw > 0 ? aiMaxItemsRequestRaw : null;
-
-  cronRunCount += 1;
-  lastCronRunAt = new Date().toISOString();
-
-  log("Cron run received", {
-    runCount: cronRunCount,
-    trigger
-  });
-
-  const [nseResult, bseResult] = await Promise.allSettled([
-    syncNseAnnouncements(trigger),
-    syncBseAnnouncements(trigger)
-  ]);
+async function runSourceSyncStage(trigger) {
+  const [nseResult, bseResult] = await Promise.allSettled([syncNseAnnouncements(trigger), syncBseAnnouncements(trigger)]);
   const nseNewCount = nseResult.status === "fulfilled" ? Number(nseResult.value?.newCount ?? 0) : 0;
   const bseNewCount = bseResult.status === "fulfilled" ? Number(bseResult.value?.newCount ?? 0) : 0;
-  const hasNewSourceRows = nseNewCount > 0 || bseNewCount > 0;
+
+  return {
+    nseResult,
+    bseResult,
+    hasNewSourceRows: nseNewCount > 0 || bseNewCount > 0
+  };
+}
+
+async function runDerivedSyncStage(trigger, hasNewSourceRows) {
   const shouldRefreshDerived =
     hasNewSourceRows || stores.COMBINED.announcements.length === 0 || stores.DEDUP.announcements.length === 0;
 
@@ -4307,6 +4811,7 @@ async function handleCronRun(req, res) {
           syncedAt: stores.COMBINED.lastSyncAt
         }
       };
+
   const dedupResult = shouldRefreshDerived
     ? await refreshDedupAnnouncements(trigger)
         .then((value) => ({ status: "fulfilled", value }))
@@ -4325,127 +4830,141 @@ async function handleCronRun(req, res) {
         }
       };
 
-  const aiClassificationResult =
-    dedupResult.status === "fulfilled"
-      ? await runAiClassificationCron(trigger, dedupResult.value?.touchedDedupKeys, {
-          forceEnabled: aiForceEnabled,
-          maxItems: aiMaxItemsRequest
-        })
-          .then((value) => ({ status: "fulfilled", value }))
-          .catch((reason) => ({ status: "rejected", reason }))
-      : {
-          status: "fulfilled",
-          value: {
-            trigger,
-            skipped: true,
-            reason: "dedup-sync-failed",
-            processedCount: 0,
-            successCount: 0,
-            failureCount: 0
-          }
-        };
-
-  const responsePayload = {
-    ok:
-      nseResult.status === "fulfilled" &&
-      bseResult.status === "fulfilled" &&
-      combinedResult.status === "fulfilled" &&
-      dedupResult.status === "fulfilled" &&
-      aiClassificationResult.status === "fulfilled",
-    runCount: cronRunCount,
-    lastCronRunAt,
-    nseSync:
-      nseResult.status === "fulfilled"
-        ? nseResult.value
-        : { error: nseResult.reason instanceof Error ? nseResult.reason.message : "Unknown NSE sync error" },
-    bseSync:
-      bseResult.status === "fulfilled"
-        ? bseResult.value
-        : { error: bseResult.reason instanceof Error ? bseResult.reason.message : "Unknown BSE sync error" },
-    combinedSync:
-      combinedResult.status === "fulfilled"
-        ? combinedResult.value
-        : { error: combinedResult.reason instanceof Error ? combinedResult.reason.message : "Unknown combined sync error" },
-    dedupSync:
-      dedupResult.status === "fulfilled"
-        ? dedupResult.value
-        : { error: dedupResult.reason instanceof Error ? dedupResult.reason.message : "Unknown dedup sync error" },
-    aiClassification:
-      aiClassificationResult.status === "fulfilled"
-        ? aiClassificationResult.value
-        : {
-            error:
-              aiClassificationResult.reason instanceof Error
-                ? aiClassificationResult.reason.message
-                : "Unknown AI classification error"
-          }
+  return {
+    combinedResult,
+    dedupResult
   };
-
-  if (responsePayload.ok) {
-    sendJson(req, res, 200, responsePayload);
-    return;
-  }
-
-  log("Cron sync finished with errors", responsePayload);
-  sendJson(req, res, 502, responsePayload);
 }
 
-async function handleAiOnlyRun(req, res) {
-  if (!requireCronSecret(req, res, "Invalid AI job secret.")) {
-    return;
+async function runAiClassificationStage(trigger, dedupResult) {
+  if (dedupResult.status !== "fulfilled") {
+    return {
+      status: "fulfilled",
+      value: {
+        trigger,
+        skipped: true,
+        reason: "dedup-sync-failed",
+        processedCount: 0,
+        successCount: 0,
+        failureCount: 0
+      }
+    };
   }
 
-  const body = await readJsonBody(req);
-  const trigger = String(body.trigger ?? "unknown");
-  const aiRequest = body?.ai && typeof body.ai === "object" ? body.ai : null;
-  const aiForceEnabled = aiRequest?.enabled === undefined ? true : Boolean(aiRequest?.enabled);
-  const aiMaxItemsRequestRaw = Number.parseInt(String(aiRequest?.maxItems ?? ""), 10);
-  const aiMaxItemsRequest = Number.isFinite(aiMaxItemsRequestRaw) && aiMaxItemsRequestRaw > 0 ? aiMaxItemsRequestRaw : null;
-  const aiRecentPoolRaw = Number.parseInt(String(aiRequest?.recentCandidatePool ?? ""), 10);
-  const aiRecentPool = Number.isFinite(aiRecentPoolRaw) && aiRecentPoolRaw > 0 ? aiRecentPoolRaw : null;
-  const effectiveTrigger = trigger || "manual-ai-only";
+  if (!aiClassifierEnabled) {
+    return {
+      status: "fulfilled",
+      value: {
+        trigger,
+        skipped: true,
+        reason: "ai-classifier-disabled",
+        processedCount: 0,
+        successCount: 0,
+        failureCount: 0
+      }
+    };
+  }
 
-  aiOnlyRunCount += 1;
-  lastAiOnlyRunAt = new Date().toISOString();
+  const touchedDedupKeys = Array.isArray(dedupResult.value?.touchedDedupKeys) ? dedupResult.value.touchedDedupKeys : [];
+  return runAiClassificationCron(trigger, touchedDedupKeys, {
+    forceEnabled: false
+  })
+    .then((value) => ({ status: "fulfilled", value }))
+    .catch((reason) => ({ status: "rejected", reason }));
+}
 
-  log("AI-only run received", {
-    runCount: aiOnlyRunCount,
-    trigger: effectiveTrigger,
-    maxItems: aiMaxItemsRequest,
-    forceEnabled: aiForceEnabled
-  });
+function parseAiRequestConfig(body, defaults = {}) {
+  const aiRequest = body?.ai && typeof body.ai === "object" ? body.ai : {};
+  const forceEnabled =
+    aiRequest?.enabled === undefined ? Boolean(defaults.forceEnabled) : Boolean(aiRequest?.enabled);
+  const asyncEnabled =
+    aiRequest?.async === undefined ? Boolean(defaults.asyncEnabled ?? true) : Boolean(aiRequest?.async);
 
+  const maxItemsRaw = Number.parseInt(String(aiRequest?.maxItems ?? ""), 10);
+  const maxItems = Number.isFinite(maxItemsRaw) && maxItemsRaw > 0 ? maxItemsRaw : null;
+
+  const recentPoolRaw = Number.parseInt(String(aiRequest?.recentCandidatePool ?? ""), 10);
+  const recentCandidatePool = Number.isFinite(recentPoolRaw) && recentPoolRaw > 0 ? recentPoolRaw : null;
+
+  const chunkSizeRaw = Number.parseInt(String(aiRequest?.chunkSize ?? ""), 10);
+  const chunkSize = Number.isFinite(chunkSizeRaw) && chunkSizeRaw > 0 ? chunkSizeRaw : null;
+
+  const maxLoopsRaw = Number.parseInt(String(aiRequest?.maxLoops ?? ""), 10);
+  const maxLoops = Number.isFinite(maxLoopsRaw) && maxLoopsRaw > 0 ? maxLoopsRaw : null;
+
+  return {
+    forceEnabled,
+    asyncEnabled,
+    maxItems,
+    recentCandidatePool,
+    chunkSize,
+    maxLoops
+  };
+}
+
+function resolveAiAsyncChunkSize(chunkSizeRequest) {
+  const fallback = Math.max(1, normalizePositiveInt(aiAsyncChunkSizeDefault, 10));
+  const requestedRaw = Number.parseInt(String(chunkSizeRequest ?? ""), 10);
+  const requested = Number.isFinite(requestedRaw) && requestedRaw > 0 ? requestedRaw : fallback;
+  return Math.max(1, Math.min(50, Math.floor(requested)));
+}
+
+function resolveAiAsyncMaxLoops(maxLoopsRequest) {
+  const fallback = Math.max(1, normalizePositiveInt(aiAsyncMaxLoopsDefault, 120));
+  const requestedRaw = Number.parseInt(String(maxLoopsRequest ?? ""), 10);
+  const requested = Number.isFinite(requestedRaw) && requestedRaw > 0 ? requestedRaw : fallback;
+  return Math.max(1, Math.min(500, Math.floor(requested)));
+}
+
+async function prepareStoresForAiClassification(triggerBase = "ai") {
   await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore()]);
 
   let combinedPrep = null;
   let dedupPrep = null;
+  const normalizedTrigger = normalizeText(triggerBase) || "ai";
 
   if (stores.COMBINED.announcements.length === 0 && (stores.NSE.announcements.length > 0 || stores.BSE.announcements.length > 0)) {
-    combinedPrep = await refreshCombinedAnnouncements(`${effectiveTrigger}-ai-only-prepare`)
+    combinedPrep = await refreshCombinedAnnouncements(`${normalizedTrigger}-prepare`)
       .then((value) => ({ status: "fulfilled", value }))
       .catch((reason) => ({ status: "rejected", reason }));
   }
 
   if (stores.DEDUP.announcements.length === 0 && stores.COMBINED.announcements.length > 0) {
-    dedupPrep = await refreshDedupAnnouncements(`${effectiveTrigger}-ai-only-prepare`)
+    dedupPrep = await refreshDedupAnnouncements(`${normalizedTrigger}-prepare`)
       .then((value) => ({ status: "fulfilled", value }))
       .catch((reason) => ({ status: "rejected", reason }));
   }
 
-  const aiClassificationResult =
-    await runAiClassificationCron(effectiveTrigger, [], {
-      forceEnabled: aiForceEnabled,
-      maxItems: aiMaxItemsRequest,
-      scanRecentWhenNoTouched: true,
-      recentCandidatePool: aiRecentPool
-    })
-      .then((value) => ({ status: "fulfilled", value }))
-      .catch((reason) => ({ status: "rejected", reason }));
+  return { combinedPrep, dedupPrep };
+}
 
-  const responsePayload = {
+async function executeAiClassificationChunk(params = {}) {
+  const effectiveTrigger = normalizeText(params?.trigger) || "manual-ai-only";
+  const forceEnabled = params?.forceEnabled === true;
+  const maxItemsRaw = Number.parseInt(String(params?.maxItems ?? ""), 10);
+  const maxItems = Number.isFinite(maxItemsRaw) && maxItemsRaw > 0 ? maxItemsRaw : null;
+  const scanRecentWhenNoTouched = params?.scanRecentWhenNoTouched === true;
+  const recentPoolRaw = Number.parseInt(String(params?.recentCandidatePool ?? ""), 10);
+  const recentCandidatePool = Number.isFinite(recentPoolRaw) && recentPoolRaw > 0 ? recentPoolRaw : null;
+  const touchedDedupKeys = Array.isArray(params?.touchedDedupKeys) ? params.touchedDedupKeys : [];
+
+  aiChunkRunCount += 1;
+  lastAiChunkRunAt = new Date().toISOString();
+
+  const { combinedPrep, dedupPrep } = await prepareStoresForAiClassification(effectiveTrigger);
+  const aiClassificationResult = await runAiClassificationCron(effectiveTrigger, touchedDedupKeys, {
+    forceEnabled,
+    maxItems,
+    scanRecentWhenNoTouched,
+    recentCandidatePool
+  })
+    .then((value) => ({ status: "fulfilled", value }))
+    .catch((reason) => ({ status: "rejected", reason }));
+
+  return {
     ok: aiClassificationResult.status === "fulfilled",
-    runCount: aiOnlyRunCount,
-    lastAiOnlyRunAt,
+    runCount: aiChunkRunCount,
+    lastAiChunkRunAt,
     dedupSnapshot: {
       totalStored: stores.DEDUP.announcements.length,
       lastDedupSyncAt: stores.DEDUP.lastSyncAt
@@ -4477,6 +4996,198 @@ async function handleAiOnlyRun(req, res) {
                 : "Unknown AI classification error"
           }
   };
+}
+
+async function handleCronRun(req, res) {
+  if (!requireCronSecret(req, res, "Invalid cron secret.")) {
+    return;
+  }
+
+  const body = await readJsonBody(req);
+  const trigger = String(body.trigger ?? "unknown");
+  const forceRun = body?.force === true || normalizeText(body?.force).toLowerCase() === "true";
+
+  cronRunCount += 1;
+  lastCronRunAt = new Date().toISOString();
+  const cronWindow = evaluateCronWindow(new Date());
+
+  log("Cron run received", {
+    runCount: cronRunCount,
+    trigger,
+    forceRun,
+    cronWindow
+  });
+
+  if (!cronWindow.withinWindow && !forceRun) {
+    const responsePayload = {
+      ok: true,
+      skipped: true,
+      reason: "outside-cron-window",
+      runCount: cronRunCount,
+      lastCronRunAt,
+      trigger,
+      cronWindow,
+      nseSync: {
+        exchange: "NSE",
+        trigger,
+        skipped: true,
+        reason: "outside-cron-window"
+      },
+      bseSync: {
+        exchange: "BSE",
+        trigger,
+        skipped: true,
+        reason: "outside-cron-window"
+      },
+      combinedSync: {
+        exchange: "COMBINED",
+        trigger,
+        skipped: true,
+        reason: "outside-cron-window"
+      },
+      dedupSync: {
+        exchange: "DEDUP",
+        trigger,
+        skipped: true,
+        reason: "outside-cron-window"
+      },
+      aiClassification: {
+        trigger,
+        skipped: true,
+        reason: "outside-cron-window",
+        processedCount: 0,
+        successCount: 0,
+        failureCount: 0
+      }
+    };
+    sendJson(req, res, 200, responsePayload);
+    return;
+  }
+
+  const sourceStage = await runSourceSyncStage(trigger);
+  const { combinedResult, dedupResult } = await runDerivedSyncStage(trigger, sourceStage.hasNewSourceRows);
+  const aiClassificationResult = await runAiClassificationStage(trigger, dedupResult);
+
+  const responsePayload = {
+    ok:
+      sourceStage.nseResult.status === "fulfilled" &&
+      sourceStage.bseResult.status === "fulfilled" &&
+      combinedResult.status === "fulfilled" &&
+      dedupResult.status === "fulfilled" &&
+      aiClassificationResult.status === "fulfilled",
+    runCount: cronRunCount,
+    lastCronRunAt,
+    trigger,
+    cronWindow,
+    nseSync:
+      sourceStage.nseResult.status === "fulfilled"
+        ? sourceStage.nseResult.value
+        : {
+            error:
+              sourceStage.nseResult.reason instanceof Error
+                ? sourceStage.nseResult.reason.message
+                : "Unknown NSE sync error"
+          },
+    bseSync:
+      sourceStage.bseResult.status === "fulfilled"
+        ? sourceStage.bseResult.value
+        : {
+            error:
+              sourceStage.bseResult.reason instanceof Error
+                ? sourceStage.bseResult.reason.message
+                : "Unknown BSE sync error"
+          },
+    combinedSync:
+      combinedResult.status === "fulfilled"
+        ? combinedResult.value
+        : { error: combinedResult.reason instanceof Error ? combinedResult.reason.message : "Unknown combined sync error" },
+    dedupSync:
+      dedupResult.status === "fulfilled"
+        ? dedupResult.value
+        : { error: dedupResult.reason instanceof Error ? dedupResult.reason.message : "Unknown dedup sync error" },
+    aiClassification:
+      aiClassificationResult.status === "fulfilled"
+        ? aiClassificationResult.value
+        : {
+            error:
+              aiClassificationResult.reason instanceof Error
+                ? aiClassificationResult.reason.message
+                : "Unknown AI classification error"
+          }
+  };
+
+  if (responsePayload.ok) {
+    sendJson(req, res, 200, responsePayload);
+    return;
+  }
+
+  log("Cron sync finished with errors", responsePayload);
+  sendJson(req, res, 502, responsePayload);
+}
+
+async function handleAiOnlyRun(req, res, requestUrl) {
+  if (!requireCronSecret(req, res, "Invalid AI job secret.")) {
+    return;
+  }
+
+  const body = await readJsonBody(req);
+  const trigger = String(body.trigger ?? "unknown");
+  const aiConfig = parseAiRequestConfig(body, {
+    forceEnabled: true,
+    asyncEnabled: true
+  });
+  const effectiveTrigger = trigger || "manual-ai-only";
+  const syncOverride = normalizeText(requestUrl.searchParams.get("sync")).toLowerCase() === "true" || body?.sync === true;
+
+  aiOnlyRunCount += 1;
+  lastAiOnlyRunAt = new Date().toISOString();
+
+  log("AI-only run received", {
+    runCount: aiOnlyRunCount,
+    trigger: effectiveTrigger,
+    maxItems: aiConfig.maxItems,
+    forceEnabled: aiConfig.forceEnabled,
+    asyncEnabled: aiConfig.asyncEnabled && !syncOverride
+  });
+
+  if (isDatabaseEnabled() && aiConfig.asyncEnabled && !syncOverride) {
+    const asyncJobPayload = {
+      mode: "ai-only",
+      trigger: effectiveTrigger,
+      forceEnabled: aiConfig.forceEnabled,
+      targetSuccessCount: aiConfig.maxItems ?? normalizePositiveInt(aiMaxItemsPerCron, 120),
+      chunkSize: resolveAiAsyncChunkSize(aiConfig.chunkSize),
+      maxLoops: resolveAiAsyncMaxLoops(aiConfig.maxLoops),
+      touchedDedupKeys: [],
+      scanRecentWhenNoTouched: true,
+      recentCandidatePool: aiConfig.recentCandidatePool
+    };
+
+    const job = await createBackgroundJob(backgroundJobTypeAiClassification, asyncJobPayload, { maxAttempts: 1 });
+    if (!job) {
+      sendJson(req, res, 503, { error: "Database-backed background queue is unavailable." });
+      return;
+    }
+
+    sendJson(req, res, 202, {
+      ok: true,
+      queued: true,
+      runCount: aiOnlyRunCount,
+      lastAiOnlyRunAt,
+      mode: "async-worker",
+      job
+    });
+    return;
+  }
+
+  const responsePayload = await executeAiClassificationChunk({
+    trigger: effectiveTrigger,
+    forceEnabled: aiConfig.forceEnabled,
+    maxItems: aiConfig.maxItems,
+    scanRecentWhenNoTouched: true,
+    recentCandidatePool: aiConfig.recentCandidatePool,
+    touchedDedupKeys: []
+  });
 
   if (responsePayload.ok) {
     sendJson(req, res, 200, responsePayload);
@@ -4485,6 +5196,134 @@ async function handleAiOnlyRun(req, res) {
 
   log("AI-only classification run finished with errors", responsePayload);
   sendJson(req, res, 502, responsePayload);
+}
+
+async function handleInternalRunAiChunk(req, res) {
+  if (!requireCronSecret(req, res, "Invalid worker secret.")) {
+    return;
+  }
+
+  const body = await readJsonBody(req);
+  const trigger = String(body?.trigger ?? "worker-ai-chunk");
+  const forceEnabled = body?.forceEnabled === true;
+  const maxItemsRaw = Number.parseInt(String(body?.maxItems ?? ""), 10);
+  const maxItems = Number.isFinite(maxItemsRaw) && maxItemsRaw > 0 ? maxItemsRaw : null;
+  const scanRecentWhenNoTouched = body?.scanRecentWhenNoTouched === true;
+  const recentCandidatePoolRaw = Number.parseInt(String(body?.recentCandidatePool ?? ""), 10);
+  const recentCandidatePool = Number.isFinite(recentCandidatePoolRaw) && recentCandidatePoolRaw > 0 ? recentCandidatePoolRaw : null;
+  const touchedDedupKeys = Array.isArray(body?.touchedDedupKeys) ? body.touchedDedupKeys : [];
+
+  const responsePayload = await executeAiClassificationChunk({
+    trigger,
+    forceEnabled,
+    maxItems,
+    scanRecentWhenNoTouched,
+    recentCandidatePool,
+    touchedDedupKeys
+  });
+  if (responsePayload.ok) {
+    sendJson(req, res, 200, responsePayload);
+    return;
+  }
+  sendJson(req, res, 502, responsePayload);
+}
+
+async function handleClaimBackgroundJob(req, res) {
+  if (!requireCronSecret(req, res, "Invalid worker secret.")) {
+    return;
+  }
+  if (!isDatabaseEnabled()) {
+    sendJson(req, res, 503, { error: "Background jobs require Postgres." });
+    return;
+  }
+
+  const body = await readJsonBody(req);
+  const workerId = normalizeText(body?.workerId || body?.worker || "worker");
+  const types = Array.isArray(body?.types) ? body.types : [backgroundJobTypeAiClassification];
+  const job = await claimNextBackgroundJob(workerId, types);
+  sendJson(req, res, 200, { ok: true, job });
+}
+
+async function handleBackgroundJobHeartbeat(req, res, jobId) {
+  if (!requireCronSecret(req, res, "Invalid worker secret.")) {
+    return;
+  }
+
+  const body = await readJsonBody(req);
+  const workerId = normalizeText(body?.workerId || body?.worker || "");
+  const job = await markBackgroundJobHeartbeat(jobId, workerId);
+  if (!job) {
+    sendJson(req, res, 404, { error: "Job not found or not running." });
+    return;
+  }
+  sendJson(req, res, 200, { ok: true, job });
+}
+
+async function handleBackgroundJobComplete(req, res, jobId) {
+  if (!requireCronSecret(req, res, "Invalid worker secret.")) {
+    return;
+  }
+
+  const body = await readJsonBody(req);
+  const workerId = normalizeText(body?.workerId || body?.worker || "");
+  const job = await markBackgroundJobCompleted(jobId, body?.result, workerId);
+  if (!job) {
+    sendJson(req, res, 404, { error: "Job not found or not running." });
+    return;
+  }
+  sendJson(req, res, 200, { ok: true, job });
+}
+
+async function handleBackgroundJobFail(req, res, jobId) {
+  if (!requireCronSecret(req, res, "Invalid worker secret.")) {
+    return;
+  }
+
+  const body = await readJsonBody(req);
+  const workerId = normalizeText(body?.workerId || body?.worker || "");
+  const errorMessage = normalizeText(body?.error || body?.message || "Background job failed");
+  const job = await markBackgroundJobFailed(jobId, errorMessage, body?.result, workerId);
+  if (!job) {
+    sendJson(req, res, 404, { error: "Job not found or not running." });
+    return;
+  }
+  sendJson(req, res, 200, { ok: true, job });
+}
+
+async function handleGetBackgroundJobs(req, res, requestUrl) {
+  if (!isDatabaseEnabled()) {
+    sendJson(req, res, 503, { error: "Background jobs require Postgres." });
+    return;
+  }
+
+  const jobsResponse = await listBackgroundJobs({
+    status: requestUrl.searchParams.get("status"),
+    type: requestUrl.searchParams.get("type"),
+    limit: requestUrl.searchParams.get("limit"),
+    offset: requestUrl.searchParams.get("offset")
+  });
+  sendJson(req, res, 200, {
+    jobs: jobsResponse.jobs,
+    total: jobsResponse.total,
+    limit: jobsResponse.limit,
+    offset: jobsResponse.offset,
+    page: Math.floor(jobsResponse.offset / Math.max(1, jobsResponse.limit)) + 1,
+    totalPages: Math.max(1, Math.ceil(jobsResponse.total / Math.max(1, jobsResponse.limit)))
+  });
+}
+
+async function handleGetBackgroundJob(req, res, jobId) {
+  if (!isDatabaseEnabled()) {
+    sendJson(req, res, 503, { error: "Background jobs require Postgres." });
+    return;
+  }
+
+  const job = await getBackgroundJobById(jobId);
+  if (!job) {
+    sendJson(req, res, 404, { error: "Job not found." });
+    return;
+  }
+  sendJson(req, res, 200, { job });
 }
 
 async function handleWorkerHeartbeat(req, res) {
@@ -4524,6 +5363,13 @@ async function handleStatus(req, res) {
     (record) => normalizeText(record?.criteriaVersion) === aiCriteriaVersion && normalizeText(record?.status) === "FAILED"
   ).length;
   const aiReviewDiagnostics = buildAiReviewDiagnostics();
+  const backgroundJobCounts = isDatabaseEnabled() && enableLegacyJobEndpoints
+    ? await getBackgroundJobStatusCounts().catch((error) => {
+        const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown error"));
+        log("Failed to load background job counts", { message });
+        return null;
+      })
+    : null;
 
   sendJson(req, res, 200, {
     service: appName,
@@ -4534,6 +5380,8 @@ async function handleStatus(req, res) {
     lastCronRunAt,
     aiOnlyRunCount,
     lastAiOnlyRunAt,
+    aiChunkRunCount,
+    lastAiChunkRunAt,
     workerHeartbeatCount,
     lastWorkerHeartbeatAt,
     nseAnnouncementsCount: stores.NSE.announcements.length,
@@ -4568,7 +5416,23 @@ async function handleStatus(req, res) {
     database: {
       enabled: isDatabaseEnabled(),
       ready: databaseReady,
-      table: databaseSnapshotTable
+      snapshotTable: databaseSnapshotTable,
+      jobsTable: enableLegacyJobEndpoints ? databaseBackgroundJobsTable : null
+    },
+    backgroundJobs: {
+      enabled: isDatabaseEnabled() && enableLegacyJobEndpoints,
+      counts: backgroundJobCounts
+    },
+    pipeline: {
+      mode: "cron-only",
+      cronEndpoint: "/api/jobs/daily",
+      cronWindow: {
+        enabled: cronWindowEnabled,
+        timezone: cronWindowTimezone,
+        startHour: normalizeHourOfDay(cronWindowStartHour, 9),
+        endHour: normalizeHourOfDay(cronWindowEndHour, 21)
+      },
+      legacyJobEndpointsEnabled: enableLegacyJobEndpoints
     }
   });
 }
@@ -4576,6 +5440,10 @@ async function handleStatus(req, res) {
 const server = createServer(async (req, res) => {
   const method = req.method ?? "GET";
   const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  const backgroundJobByIdMatch = requestUrl.pathname.match(/^\/api\/jobs\/(\d+)$/);
+  const internalJobHeartbeatMatch = requestUrl.pathname.match(/^\/api\/internal\/jobs\/(\d+)\/heartbeat$/);
+  const internalJobCompleteMatch = requestUrl.pathname.match(/^\/api\/internal\/jobs\/(\d+)\/complete$/);
+  const internalJobFailMatch = requestUrl.pathname.match(/^\/api\/internal\/jobs\/(\d+)\/fail$/);
 
   if (method === "OPTIONS") {
     applyCorsHeaders(req, res);
@@ -4586,21 +5454,35 @@ const server = createServer(async (req, res) => {
 
   try {
     if (method === "GET" && requestUrl.pathname === "/") {
+      const docs = [
+        "GET /health",
+        "GET /api/health",
+        "GET /api/status",
+        "GET/POST /api/notes",
+        "GET /api/notifications/announcements?exchange=NSE|BSE|NSE+BSE|DEDUP|ALL&limit=100&symbol=TCS",
+        "GET /api/ai/categories",
+        "GET /api/ai/suggestions",
+        "POST /api/ai/suggestions",
+        "POST /api/ai/reviews/bulk",
+        "POST /api/jobs/daily"
+      ];
+      if (enableLegacyJobEndpoints) {
+        docs.push(
+          "POST /api/jobs/ai-only",
+          "GET /api/jobs?status=queued|running|completed|failed&type=ai-classification&limit=50&offset=0",
+          "GET /api/jobs/:id",
+          "POST /api/internal/worker-heartbeat",
+          "POST /api/internal/jobs/claim",
+          "POST /api/internal/jobs/:id/heartbeat",
+          "POST /api/internal/jobs/:id/complete",
+          "POST /api/internal/jobs/:id/fail",
+          "POST /api/internal/ai/run-chunk"
+        );
+      }
+
       sendJson(req, res, 200, {
         message: "API is running",
-        docs: [
-          "GET /health",
-          "GET /api/health",
-          "GET /api/status",
-          "GET/POST /api/notes",
-          "GET /api/notifications/announcements?exchange=NSE|BSE|NSE+BSE|DEDUP|ALL&limit=100&symbol=TCS",
-          "GET /api/ai/categories",
-          "GET /api/ai/suggestions",
-          "POST /api/ai/suggestions",
-          "POST /api/ai/reviews/bulk",
-          "POST /api/jobs/daily",
-          "POST /api/jobs/ai-only"
-        ]
+        docs
       });
       return;
     }
@@ -4656,12 +5538,83 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === "POST" && requestUrl.pathname === "/api/jobs/ai-only") {
-      await handleAiOnlyRun(req, res);
+      if (!enableLegacyJobEndpoints) {
+        sendJson(req, res, 410, buildLegacyEndpointDisabledPayload());
+        return;
+      }
+      await handleAiOnlyRun(req, res, requestUrl);
+      return;
+    }
+
+    if (method === "GET" && requestUrl.pathname === "/api/jobs") {
+      if (!enableLegacyJobEndpoints) {
+        sendJson(req, res, 410, buildLegacyEndpointDisabledPayload());
+        return;
+      }
+      await handleGetBackgroundJobs(req, res, requestUrl);
+      return;
+    }
+
+    if (method === "GET" && backgroundJobByIdMatch) {
+      if (!enableLegacyJobEndpoints) {
+        sendJson(req, res, 410, buildLegacyEndpointDisabledPayload());
+        return;
+      }
+      await handleGetBackgroundJob(req, res, backgroundJobByIdMatch[1]);
       return;
     }
 
     if (method === "POST" && requestUrl.pathname === "/api/internal/worker-heartbeat") {
+      if (!enableLegacyJobEndpoints) {
+        sendJson(req, res, 410, buildLegacyEndpointDisabledPayload());
+        return;
+      }
       await handleWorkerHeartbeat(req, res);
+      return;
+    }
+
+    if (method === "POST" && requestUrl.pathname === "/api/internal/jobs/claim") {
+      if (!enableLegacyJobEndpoints) {
+        sendJson(req, res, 410, buildLegacyEndpointDisabledPayload());
+        return;
+      }
+      await handleClaimBackgroundJob(req, res);
+      return;
+    }
+
+    if (method === "POST" && internalJobHeartbeatMatch) {
+      if (!enableLegacyJobEndpoints) {
+        sendJson(req, res, 410, buildLegacyEndpointDisabledPayload());
+        return;
+      }
+      await handleBackgroundJobHeartbeat(req, res, internalJobHeartbeatMatch[1]);
+      return;
+    }
+
+    if (method === "POST" && internalJobCompleteMatch) {
+      if (!enableLegacyJobEndpoints) {
+        sendJson(req, res, 410, buildLegacyEndpointDisabledPayload());
+        return;
+      }
+      await handleBackgroundJobComplete(req, res, internalJobCompleteMatch[1]);
+      return;
+    }
+
+    if (method === "POST" && internalJobFailMatch) {
+      if (!enableLegacyJobEndpoints) {
+        sendJson(req, res, 410, buildLegacyEndpointDisabledPayload());
+        return;
+      }
+      await handleBackgroundJobFail(req, res, internalJobFailMatch[1]);
+      return;
+    }
+
+    if (method === "POST" && requestUrl.pathname === "/api/internal/ai/run-chunk") {
+      if (!enableLegacyJobEndpoints) {
+        sendJson(req, res, 410, buildLegacyEndpointDisabledPayload());
+        return;
+      }
+      await handleInternalRunAiChunk(req, res);
       return;
     }
 
