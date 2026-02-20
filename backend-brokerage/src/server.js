@@ -10,18 +10,45 @@ import {
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const port = Number.parseInt(process.env.PORT ?? "10000", 10);
+const port = Number.parseInt(process.env.PORT ?? "10001", 10);
 const appName = process.env.APP_NAME ?? "ai-webapp-brokerage-api";
-const appEnv = process.env.APP_ENV ?? "development";
+const appEnv = process.env.APP_ENV?.trim() || process.env.NODE_ENV?.trim() || "development";
+const isProduction = appEnv.toLowerCase() === "production";
 const cronSecret = process.env.CRON_SECRET ?? "";
 const corsOrigins = (process.env.CORS_ORIGIN ?? "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-const authSecret = process.env.AUTH_SECRET?.trim() || `dev-${randomBytes(32).toString("hex")}`;
-const encryptionKey = deriveKey(process.env.TOKEN_ENCRYPTION_KEY?.trim() || authSecret);
+const configuredAuthSecret = process.env.AUTH_SECRET?.trim() || "";
+const configuredTokenEncryptionKey = process.env.TOKEN_ENCRYPTION_KEY?.trim() || "";
+
+if (isProduction) {
+  const missingVars = [];
+
+  if (!configuredAuthSecret) {
+    missingVars.push("AUTH_SECRET");
+  }
+
+  if (!configuredTokenEncryptionKey) {
+    missingVars.push("TOKEN_ENCRYPTION_KEY");
+  }
+
+  if (corsOrigins.length === 0) {
+    missingVars.push("CORS_ORIGIN");
+  }
+
+  if (missingVars.length > 0) {
+    throw new Error(
+      `[config] Missing required production env vars: ${missingVars.join(", ")}`
+    );
+  }
+}
+
+const authSecret = configuredAuthSecret || `dev-${randomBytes(32).toString("hex")}`;
+const encryptionKey = deriveKey(configuredTokenEncryptionKey || authSecret);
 const publicApiBase = process.env.PUBLIC_API_BASE_URL?.trim().replace(/\/$/, "") || "";
 
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim() || "";
@@ -44,7 +71,8 @@ const allowedRedirects = new Set(
   ].map((value) => normalizeRedirect(value)).filter(Boolean)
 );
 
-const dataDir = path.join(process.cwd(), "data");
+const serviceRootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const dataDir = path.resolve(serviceRootDir, process.env.BROKERAGE_DATA_DIR?.trim() || "data");
 const dbFilePath = path.join(dataDir, "app-db.json");
 const archiveRootDir = path.join(dataDir, "email-archive");
 
@@ -87,7 +115,7 @@ const defaultDb = {
 let db = await loadDb();
 let persistQueue = Promise.resolve();
 
-if (!process.env.AUTH_SECRET) {
+if (!configuredAuthSecret) {
   log("AUTH_SECRET is not set. A temporary runtime secret is being used.");
 }
 

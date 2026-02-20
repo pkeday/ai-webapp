@@ -17,6 +17,15 @@ cp .env.example .env
 node src/server.js
 ```
 
+## Important env vars
+
+- `PORT`: API port (default `10001`).
+- `BROKERAGE_DATA_DIR`: Optional data directory for db/archive storage. Relative values resolve from `backend-brokerage/`.
+- `APP_ENV`: Set `production` in Render.
+- `AUTH_SECRET`: Required in production. Used to sign auth/session tokens.
+- `TOKEN_ENCRYPTION_KEY`: Required in production. Used to encrypt Google tokens at rest.
+- `CORS_ORIGIN`: Required in production (for example `https://pkeday.github.io`).
+
 ## Main endpoints
 
 - `GET /api/health`
