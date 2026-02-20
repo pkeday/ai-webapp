@@ -2132,18 +2132,25 @@ async function persistAiReviewStore() {
     total: aiReviewStore.records.length,
     records: aiReviewStore.records
   };
+  let persistedToDatabase = false;
 
   if (isDatabaseEnabled()) {
     try {
       await writeSnapshotToDatabase(databaseAiReviewSnapshotKey, payload);
+      persistedToDatabase = true;
     } catch (error) {
       const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
       log("Failed to persist AI review store to Postgres", { message });
+      throw new Error("Failed to persist AI reviews to Postgres.");
     }
   }
 
   await mkdir(dirname(aiReviewsStoragePath), { recursive: true });
   await writeFile(aiReviewsStoragePath, JSON.stringify(payload, null, 2), "utf8");
+  return {
+    persistedToDatabase,
+    persistedToFile: true
+  };
 }
 
 function indexAiSuggestionStore() {
@@ -4841,6 +4848,12 @@ async function handleCreateAiSuggestion(req, res) {
 
 async function handleBulkAiReviews(req, res) {
   await Promise.all([loadStore("DEDUP"), loadAiLabelStore(), loadAiReviewStore()]);
+
+  if (!isDatabaseEnabled()) {
+    sendJson(req, res, 503, { error: "AI review writes require Postgres." });
+    return;
+  }
+
   const body = await readJsonBody(req);
   const reviews = Array.isArray(body?.reviews) ? body.reviews : Array.isArray(body?.items) ? body.items : [];
   const reviewer = normalizeText(body?.reviewer);
@@ -4864,7 +4877,6 @@ async function handleBulkAiReviews(req, res) {
   const nowIso = new Date().toISOString();
   const invalid = [];
   const saved = [];
-  let missingDedupCount = 0;
 
   for (let index = 0; index < reviews.length; index += 1) {
     const entry = reviews[index];
@@ -4885,7 +4897,8 @@ async function handleBulkAiReviews(req, res) {
     }
 
     if (!dedupKeySet.has(dedupAnnouncementKey)) {
-      missingDedupCount += 1;
+      invalid.push({ index, key: dedupAnnouncementKey, error: "Unknown dedupAnnouncementKey for current DEDUP records." });
+      continue;
     }
 
     const aiRecord = getAiLabelRecordForKey(dedupAnnouncementKey);
@@ -4914,7 +4927,17 @@ async function handleBulkAiReviews(req, res) {
     return;
   }
 
-  await persistAiReviewStore();
+  let persistenceResult = null;
+  try {
+    persistenceResult = await persistAiReviewStore();
+  } catch (error) {
+    const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown persistence error"));
+    sendJson(req, res, 503, {
+      error: "Failed to persist review data to Postgres.",
+      message
+    });
+    return;
+  }
   const diagnostics = buildAiReviewDiagnostics();
 
   sendJson(req, res, 200, {
@@ -4928,7 +4951,7 @@ async function handleBulkAiReviews(req, res) {
       learnedRules: diagnostics.learnedRules
     },
     diagnostics,
-    missingDedupCount,
+    storage: persistenceResult,
     savedKeys: saved.slice(0, 200).map((item) => item.dedupAnnouncementKey),
     invalid: invalid.slice(0, 30)
   });
