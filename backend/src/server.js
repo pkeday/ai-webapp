@@ -3458,6 +3458,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     backlogCandidateCount,
     queuedCount: queue.length,
     skippedExistingCount,
+    concurrency: normalizePositiveInt(aiConcurrency, 2),
     processedCount: results.length,
     successCount,
     failureCount,
