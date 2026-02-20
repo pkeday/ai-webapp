@@ -2853,8 +2853,17 @@ async function classifyWithAnthropic(model, prompt, apiKey, baseUrl) {
   return normalizeAiModelOutput(parsed);
 }
 
-async function classifyWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
+async function classifyWithGemini(model, prompt, apiKey, baseUrl, extraParts = []) {
   const systemPrompt = getAiSystemPromptText();
+  const parts = [{ text: prompt }];
+  if (Array.isArray(extraParts) && extraParts.length > 0) {
+    for (const part of extraParts) {
+      if (part && typeof part === "object") {
+        parts.push(part);
+      }
+    }
+  }
+
   const response = await fetch(`${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: {
@@ -2871,17 +2880,7 @@ async function classifyWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
       contents: [
         {
           role: "user",
-          parts: [
-            {
-              text: prompt
-            },
-            {
-              inlineData: {
-                mimeType: "application/pdf",
-                data: pdfBytes.toString("base64")
-              }
-            }
-          ]
+          parts
         }
       ],
       generationConfig: {
@@ -2912,6 +2911,21 @@ async function classifyWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
   return normalizeAiModelOutput(parsed);
 }
 
+async function classifyWithGeminiText(model, prompt, apiKey, baseUrl) {
+  return classifyWithGemini(model, prompt, apiKey, baseUrl, []);
+}
+
+async function classifyWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
+  return classifyWithGemini(model, prompt, apiKey, baseUrl, [
+    {
+      inlineData: {
+        mimeType: "application/pdf",
+        data: pdfBytes.toString("base64")
+      }
+    }
+  ]);
+}
+
 async function classifyDedupAnnouncement(announcement) {
   const dedupAnnouncementKey = normalizeAnnouncementKey(
     announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
@@ -2929,7 +2943,8 @@ async function classifyDedupAnnouncement(announcement) {
   const pdfBuffer = preparedPdf.pdfBuffer;
   const stage1Pdf = preparedPdf.stage1Pdf;
   const stage1Text = preparedPdf.stage1Text;
-  const machineReadable = !preparedPdf.usedRawPdfFallback && stage1Text.textLength >= normalizePositiveInt(aiMinReadableChars, 700);
+  const hasExtractedText = !preparedPdf.usedRawPdfFallback && stage1Text.textLength > 0;
+  const machineReadable = hasExtractedText && stage1Text.textLength >= normalizePositiveInt(aiMinReadableChars, 700);
   const criteriaVersion = aiCriteriaVersion;
   const inputHash = buildAiInputHash(announcement, criteriaVersion);
 
@@ -2940,7 +2955,7 @@ async function classifyDedupAnnouncement(announcement) {
     targetList.push(`${provider}: ${message.slice(0, 220)}`);
   };
   const classifyWithStage1Chain = async () => {
-    if (machineReadable) {
+    if (hasExtractedText) {
       if (aiOpenAiApiKey) {
         try {
           return {
@@ -2964,9 +2979,21 @@ async function classifyDedupAnnouncement(announcement) {
           captureProviderError("anthropic", error, stage1Errors);
         }
       }
+
+      if (aiGeminiApiKey) {
+        try {
+          return {
+            ...(await classifyWithGeminiText(aiGeminiStage1Model, stage1Prompt, aiGeminiApiKey, aiGeminiBaseUrl)),
+            provider: "gemini",
+            model: aiGeminiStage1Model
+          };
+        } catch (error) {
+          captureProviderError("gemini", error, stage1Errors);
+        }
+      }
     }
 
-    if (aiGeminiApiKey) {
+    if (!hasExtractedText && aiGeminiApiKey) {
       try {
         return {
           ...(await classifyWithGeminiPdf(aiGeminiStage1Model, stage1Prompt, stage1Pdf.bytes, aiGeminiApiKey, aiGeminiBaseUrl)),
@@ -2978,7 +3005,7 @@ async function classifyDedupAnnouncement(announcement) {
       }
     }
 
-    if (!machineReadable) {
+    if (!hasExtractedText) {
       if (aiAnthropicApiKey) {
         try {
           return {
@@ -3019,7 +3046,7 @@ async function classifyDedupAnnouncement(announcement) {
 
   if (shouldEscalate) {
     let stage2Pdf = stage1Pdf;
-    let stage2Text = machineReadable ? stage1Text : null;
+    let stage2Text = hasExtractedText ? stage1Text : null;
 
     if (machineReadable) {
       try {
@@ -3042,12 +3069,12 @@ async function classifyDedupAnnouncement(announcement) {
     const stage2Prompt = buildClassificationUserPrompt(
       announcement,
       criteriaVersion,
-      machineReadable ? stage2Text?.text ?? stage1Text.text : stage1Text.text
+      hasExtractedText ? stage2Text?.text ?? stage1Text.text : stage1Text.text
     );
 
     const stage2Errors = [];
     const classifyWithStage2Chain = async () => {
-      if (machineReadable) {
+      if (hasExtractedText) {
         if (aiOpenAiApiKey) {
           try {
             return {
@@ -3071,9 +3098,21 @@ async function classifyDedupAnnouncement(announcement) {
             captureProviderError("anthropic", error, stage2Errors);
           }
         }
+
+        if (aiGeminiApiKey) {
+          try {
+            return {
+              ...(await classifyWithGeminiText(aiGeminiStage2Model, stage2Prompt, aiGeminiApiKey, aiGeminiBaseUrl)),
+              provider: "gemini",
+              model: aiGeminiStage2Model
+            };
+          } catch (error) {
+            captureProviderError("gemini", error, stage2Errors);
+          }
+        }
       }
 
-      if (aiGeminiApiKey) {
+      if (!hasExtractedText && aiGeminiApiKey) {
         try {
           return {
             ...(await classifyWithGeminiPdf(aiGeminiStage2Model, stage2Prompt, stage2Pdf.bytes, aiGeminiApiKey, aiGeminiBaseUrl)),
@@ -3085,7 +3124,7 @@ async function classifyDedupAnnouncement(announcement) {
         }
       }
 
-      if (!machineReadable) {
+      if (!hasExtractedText) {
         if (aiAnthropicApiKey) {
           try {
             return {
