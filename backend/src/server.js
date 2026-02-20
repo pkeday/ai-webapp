@@ -54,8 +54,9 @@ const aiCriteriaVersion = process.env.AI_CRITERIA_VERSION ?? "v2";
 const aiClassifierEnabled = normalizeText(process.env.AI_CLASSIFIER_ENABLED ?? "false").toLowerCase() === "true";
 const aiPromptLearningMinExamples = Number.parseInt(process.env.AI_PROMPT_LEARNING_MIN_EXAMPLES ?? "1", 10);
 const aiPromptLearningMaxRules = Number.parseInt(process.env.AI_PROMPT_LEARNING_MAX_RULES ?? "8", 10);
-const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "120", 10);
+const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "20", 10);
 const aiConcurrency = Number.parseInt(process.env.AI_CLASSIFICATION_CONCURRENCY ?? "2", 10);
+const aiPersistCheckpointEvery = Number.parseInt(process.env.AI_PERSIST_CHECKPOINT_EVERY ?? "5", 10);
 const aiPdfFetchTimeoutMs = Number.parseInt(process.env.AI_PDF_FETCH_TIMEOUT_MS ?? "30000", 10);
 const aiPdfFetchMaxAttempts = Number.parseInt(process.env.AI_PDF_FETCH_MAX_ATTEMPTS ?? "3", 10);
 const aiPdfParseMaxAttempts = Number.parseInt(process.env.AI_PDF_PARSE_MAX_ATTEMPTS ?? "2", 10);
@@ -3275,6 +3276,27 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     };
   }
 
+  const checkpointEvery = Math.max(1, Math.min(50, normalizePositiveInt(aiPersistCheckpointEvery, 5)));
+  let updatesSinceCheckpoint = 0;
+  let checkpointPersistChain = Promise.resolve();
+  const scheduleCheckpointPersist = (force = false) => {
+    if (!force) {
+      updatesSinceCheckpoint += 1;
+      if (updatesSinceCheckpoint < checkpointEvery) {
+        return Promise.resolve();
+      }
+    }
+
+    updatesSinceCheckpoint = 0;
+    checkpointPersistChain = checkpointPersistChain
+      .then(() => persistAiLabelStore())
+      .catch((error) => {
+        const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown persistence error"));
+        log("Failed to persist AI label checkpoint", { message });
+      });
+    return checkpointPersistChain;
+  };
+
   const results = await mapWithConcurrency(queue, normalizePositiveInt(aiConcurrency, 2), async (announcement) => {
     const dedupAnnouncementKey = normalizeAnnouncementKey(
       announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
@@ -3284,6 +3306,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     try {
       const result = await classifyDedupAnnouncement(announcement);
       upsertAiLabelRecord(result);
+      await scheduleCheckpointPersist(false);
       return { key: dedupAnnouncementKey, ok: true, provider: result.provider, model: result.model };
     } catch (error) {
       const failure = classifyAiFailure(error);
@@ -3307,11 +3330,13 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
         failureType: failure.failureType,
         retryable: failure.retryable
       });
+      await scheduleCheckpointPersist(false);
       return { key: dedupAnnouncementKey, ok: false, error: failure.message, failureType: failure.failureType };
     }
   });
 
-  await persistAiLabelStore();
+  await scheduleCheckpointPersist(true);
+  await checkpointPersistChain;
 
   const successCount = results.filter((result) => result.ok).length;
   const failureCount = results.length - successCount;
