@@ -225,7 +225,8 @@ const aiClassificationCategories = [
 const aiCategoryDefinitions = {
   earnings_results_boardmeeting: "Filed financial results with actual statements approved by board.",
   results_intimation_date: "Notice of board meeting date to consider/approve results.",
-  earning_call_registration: "Filing primarily about earnings/results call logistics or participation details.",
+  earning_call_registration:
+    "Filing primarily about earnings/results call logistics or participation details, with concrete access/joining information.",
   earning_call_audio_recording: "Audio recording link/publication of earnings call.",
   earning_call_transcript: "Transcript publication of earnings call.",
   analyst_meeting: "1x1/small investor or analyst interaction, non-conference.",
@@ -317,7 +318,9 @@ const aiSystemPromptBaseSections = [
 const aiManualPromptRules = [
   "If the filing is a schedule/intimation of analyst or institutional investor meetings (one-on-one/group, physical/virtual), classify as analyst_meeting unless it explicitly states the interaction is an earnings/results call.",
   "Do not classify as earning_call_registration solely because terms like 'earnings call' or 'analyst call' appear in the text.",
-  "Use earning_call_registration only when the filing's primary purpose is call logistics or participation details (for example invite details, registration link, dial-in/webcast instructions, or meeting access details).",
+  "Use earning_call_registration only when the filing's primary purpose is call logistics or participation details and it provides concrete access/joining details (for example registration link, dial-in number, webcast URL, passcode, meeting link, or join instructions).",
+  "If earnings-call language appears but concrete access/joining details are missing, treat the call mention as contextual and check whether the filing is primarily about another disclosure category.",
+  "When the filing covers both call context and another substantive disclosure, classify by that substantive primary disclosure category unless call logistics/access details are the dominant content.",
   "If the filing's primary purpose is publishing another artifact, classify by that artifact category instead of earning_call_registration (for example presentation deck, transcript, audio recording, or a status/administrative letter such as postponement/rescheduling context).",
   "Treat examples as illustrative, not exhaustive; apply the same primary-purpose principle to similar contexts.",
   "Letters to shareholders/CEO narrative updates remain others even if they casually mention rescheduling a call; do not classify these as analyst_meeting unless the primary document purpose is a formal analyst/investor meet notice.",
