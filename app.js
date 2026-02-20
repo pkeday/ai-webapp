@@ -202,6 +202,7 @@ const state = {
     scheduleTime: "07:30",
     scheduleTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata",
     startFromNow: true,
+    resetCursor: false,
     statusMessage: ""
   },
   archives: {
@@ -290,6 +291,7 @@ const refs = {
   ingestSetupTime: document.getElementById("ingest-setup-time"),
   ingestSetupTimezone: document.getElementById("ingest-setup-timezone"),
   ingestSetupStartNow: document.getElementById("ingest-setup-start-now"),
+  ingestSetupResetCursor: document.getElementById("ingest-setup-reset-cursor"),
   ingestSetupLabels: document.getElementById("ingest-setup-labels"),
   ingestSetupStatus: document.getElementById("ingest-setup-status"),
   filterBroker: document.getElementById("filter-broker"),
@@ -463,6 +465,18 @@ function bindEvents() {
     }
   });
 
+  refs.ingestSetupStartNow.addEventListener("change", () => {
+    if (refs.ingestSetupStartNow.checked && refs.ingestSetupResetCursor.checked) {
+      refs.ingestSetupResetCursor.checked = false;
+    }
+  });
+
+  refs.ingestSetupResetCursor.addEventListener("change", () => {
+    if (refs.ingestSetupResetCursor.checked && refs.ingestSetupStartNow.checked) {
+      refs.ingestSetupStartNow.checked = false;
+    }
+  });
+
   refs.runIngestBtn.addEventListener("click", async () => {
     if (!state.auth.token) {
       setPipelineMessage("Sign in with Google before running ingest.");
@@ -481,9 +495,20 @@ function bindEvents() {
       });
 
       const summary = response.summary;
-      setPipelineMessage(
-        `Ingest complete: archived ${summary.archivedCount}, skipped ${summary.skippedCount}, labels ${summary.trackedLabels?.length || 0}.`
-      );
+      const fetchedCount = Number(summary.fetchedMessages || 0);
+      const archivedCount = Number(summary.archivedCount || 0);
+      const skippedCount = Number(summary.skippedCount || 0);
+      const cursorAfter = Number(summary.cursorAfterEpoch || 0);
+      const cursorLabel = cursorAfter > 0 ? new Date(cursorAfter * 1000).toLocaleString() : "not set";
+      if (fetchedCount === 0) {
+        setPipelineMessage(
+          `Ingest complete: fetched 0 messages. Cursor is ${cursorLabel}. If you expected older emails, open Ingest setup and check "Backfill older emails (reset cursor to oldest)".`
+        );
+      } else {
+        setPipelineMessage(
+          `Ingest complete: fetched ${fetchedCount}, archived ${archivedCount}, skipped ${skippedCount}.`
+        );
+      }
       await fetchArchives();
       renderAllDataViews();
     } catch (error) {
@@ -1601,6 +1626,7 @@ async function loadIngestSetupData(fetchLabels = true) {
     prefs.scheduleTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata"
   );
   state.ingestSetup.startFromNow = false;
+  state.ingestSetup.resetCursor = false;
   state.ingestSetup.statusMessage = `Loaded ${labels.length} labels. ${trackedIds.length} currently tracked.`;
 }
 
@@ -1616,6 +1642,7 @@ function renderIngestSetupModal() {
   refs.ingestSetupTime.value = state.ingestSetup.scheduleTime || "07:30";
   refs.ingestSetupTimezone.value = state.ingestSetup.scheduleTimezone || "Asia/Kolkata";
   refs.ingestSetupStartNow.checked = state.ingestSetup.startFromNow;
+  refs.ingestSetupResetCursor.checked = state.ingestSetup.resetCursor;
   refs.ingestSetupSaveBtn.disabled = state.ingestSetup.saving || state.ingestSetup.loading;
   refs.ingestSetupRefreshLabelsBtn.disabled = state.ingestSetup.saving || state.ingestSetup.loading;
 
@@ -1716,12 +1743,14 @@ async function saveIngestSetup() {
         scheduleHour: scheduleTime.hour,
         scheduleMinute: scheduleTime.minute,
         scheduleTimezone: refs.ingestSetupTimezone.value.trim() || "Asia/Kolkata",
-        startFromNow: refs.ingestSetupStartNow.checked
+        startFromNow: refs.ingestSetupStartNow.checked,
+        resetCursor: refs.ingestSetupResetCursor.checked
       })
     });
 
     state.ingestSetup.statusMessage = "Ingest setup saved.";
     state.ingestSetup.startFromNow = false;
+    state.ingestSetup.resetCursor = false;
     setPipelineMessage(
       `Tracking ${selectedLabelIds.length} labels. Daily ingest at ${formatScheduleTime(
         scheduleTime.hour,

@@ -1498,6 +1498,7 @@ async function handlePutGmailPreferences(req, res, auth) {
   const scheduleMinute = Number.parseInt(String(body.scheduleMinute ?? prefs.scheduleMinute), 10);
   const scheduleTimezone = resolveTimeZone(body.scheduleTimezone ?? prefs.scheduleTimezone);
   const resetCursorToNow = body.startFromNow === true;
+  const resetCursorToStart = body.resetCursor === true;
 
   let brokerMappings = prefs.brokerMappings;
   if (Array.isArray(body.brokerMappings)) {
@@ -1523,7 +1524,10 @@ async function handlePutGmailPreferences(req, res, auth) {
   prefs.scheduleHour = Number.isInteger(scheduleHour) ? Math.max(0, Math.min(23, scheduleHour)) : 7;
   prefs.scheduleMinute = Number.isInteger(scheduleMinute) ? Math.max(0, Math.min(59, scheduleMinute)) : 30;
   prefs.scheduleTimezone = scheduleTimezone;
-  if (resetCursorToNow) {
+  if (resetCursorToStart) {
+    prefs.lastIngestAfterEpoch = 0;
+    prefs.lastScheduledRunDate = null;
+  } else if (resetCursorToNow) {
     prefs.lastIngestAfterEpoch = Math.floor(Date.now() / 1000);
   }
   prefs.updatedAt = new Date().toISOString();
