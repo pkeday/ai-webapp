@@ -13,26 +13,39 @@ jobs:
         env:
           BROKERAGE_API_BASE_URL: ${{ secrets.BROKERAGE_API_BASE_URL }}
           BROKERAGE_CRON_SECRET: ${{ secrets.BROKERAGE_CRON_SECRET }}
+          CRON_SECRET_FALLBACK: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
 
-          if [ -z "${BROKERAGE_API_BASE_URL}" ] || [ -z "${BROKERAGE_CRON_SECRET}" ]; then
-            echo "Missing required secrets: BROKERAGE_API_BASE_URL or BROKERAGE_CRON_SECRET"
+          if [ -z "${BROKERAGE_API_BASE_URL}" ]; then
+            echo "Missing required secret: BROKERAGE_API_BASE_URL"
             exit 1
           fi
 
+          EFFECTIVE_CRON_SECRET="${BROKERAGE_CRON_SECRET:-${CRON_SECRET_FALLBACK:-}}"
           PAYLOAD="$(jq -n --arg trigger "github-actions-brokerage-cron" '{trigger:$trigger}')"
           RESPONSE_FILE="$(mktemp)"
 
-          HTTP_CODE="$(
-            curl --show-error --silent \
-              -o "${RESPONSE_FILE}" \
-              -w "%{http_code}" \
-              -X POST "${BROKERAGE_API_BASE_URL}/api/jobs/daily" \
-              -H "Content-Type: application/json" \
-              -H "x-cron-secret: ${BROKERAGE_CRON_SECRET}" \
-              -d "${PAYLOAD}"
-          )"
+          if [ -n "${EFFECTIVE_CRON_SECRET}" ]; then
+            HTTP_CODE="$(
+              curl --show-error --silent \
+                -o "${RESPONSE_FILE}" \
+                -w "%{http_code}" \
+                -X POST "${BROKERAGE_API_BASE_URL}/api/jobs/daily" \
+                -H "Content-Type: application/json" \
+                -H "x-cron-secret: ${EFFECTIVE_CRON_SECRET}" \
+                -d "${PAYLOAD}"
+            )"
+          else
+            HTTP_CODE="$(
+              curl --show-error --silent \
+                -o "${RESPONSE_FILE}" \
+                -w "%{http_code}" \
+                -X POST "${BROKERAGE_API_BASE_URL}/api/jobs/daily" \
+                -H "Content-Type: application/json" \
+                -d "${PAYLOAD}"
+            )"
+          fi
 
           echo "Brokerage cron response code: ${HTTP_CODE}"
 
