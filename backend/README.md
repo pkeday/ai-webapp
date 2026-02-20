@@ -6,15 +6,18 @@ This backend is intentionally dependency-light so it can run without extra setup
 
 ```bash
 npm start         # API server
-npm run cron      # one-time cron execution (calls /api/jobs/daily)
+npm run cron      # one-time full pipeline execution (direct in-process run)
+npm run job:source  # source ingest only (NSE+BSE)
+npm run job:derived # combined + dedup refresh only
+npm run job:ai      # AI classification only
 npm run worker    # legacy async worker (kept idle by hardcoded setting)
 npm run check     # syntax checks
 ```
 
 Production setup in this project (default):
 - API runs on Render web service.
-- Cron trigger runs via GitHub Actions schedule and calls `POST /api/jobs/daily`.
-- Pipeline executes in-order inside the cron route: `NSE/BSE ingest -> dedup -> AI classify`.
+- Cron service/worker should run `npm run cron` on schedule (no API hop required).
+- Pipeline executes in-order in one process: `NSE/BSE ingest -> dedup -> AI classify`.
 - Cron window is hardcoded to `09:00-21:00` (`Asia/Kolkata`).
 - Legacy worker/AI-only endpoints are hardcoded off.
 
@@ -23,7 +26,13 @@ Production setup in this project (default):
 - `PORT`: API server port (Render sets this automatically).
 - `CORS_ORIGIN`: Comma-separated allowed frontend origins.
 - `CRON_SECRET`: Shared secret for worker/cron protected API routes.
-- `API_BASE_URL`: API URL used by worker/cron scripts.
+- `CRON_JOB_NAME`: Optional log label for `npm run cron`.
+- `CRON_TRIGGER`: Optional trigger label for `npm run cron` (default: `render-cron`).
+- `CRON_FORCE_RUN`: Optional `true/false`; bypasses cron window when `true`.
+- `CRON_AI_ENABLED`: Optional `true/false` override for AI stage in cron script.
+- `CRON_AI_MAX_ITEMS`: Optional override for AI max items in cron script.
+- `CRON_AI_RECENT_POOL`: Optional override for AI recent candidate pool in cron script.
+- `API_BASE_URL`: API URL used by legacy worker only.
 - `WORKER_INTERVAL_SECONDS`: Legacy worker poll interval (default: `60`).
 - `WORKER_HEARTBEAT_SECONDS`: Legacy worker heartbeat interval (default: `20`).
 - `WORKER_REQUEST_TIMEOUT_MS`: Legacy worker request timeout (default: `180000`).
@@ -59,10 +68,10 @@ Production setup in this project (default):
 - `AI_SUGGESTIONS_STORAGE_FILE`: Path to category suggestion store.
 - `AI_PROMPT_LEARNING_MIN_EXAMPLES`: Min reviewed mismatches needed before adding a learned prompt rule (default: `2`).
 - `AI_PROMPT_LEARNING_MAX_RULES`: Max learned prompt rules injected into classifier system prompt (default: `8`).
-- `AI_MAX_ITEMS_PER_CRON`: Max dedup announcements sent to models per cron run (default: `120`).
+- `AI_MAX_ITEMS_PER_CRON`: Max dedup announcements sent to models per cron run (default: `40`).
 - `AI_ASYNC_CHUNK_SIZE`: Legacy async chunk size (used only if legacy endpoints are enabled in code).
 - `AI_ASYNC_MAX_LOOPS`: Legacy async loop limit (used only if legacy endpoints are enabled in code).
-- `AI_CLASSIFICATION_CONCURRENCY`: Parallel AI classification workers (default: `2`).
+- `AI_CLASSIFICATION_CONCURRENCY`: Parallel AI classification workers (default: `3`).
 - `AI_PDF_FETCH_TIMEOUT_MS`: Timeout for PDF download before classification (default: `30000`).
 - `AI_PDF_FETCH_MAX_ATTEMPTS`: Max PDF download attempts (default: `3`).
 - `AI_PDF_PARSE_MAX_ATTEMPTS`: Max parse attempts per fetched PDF (default: `2`).
@@ -108,14 +117,14 @@ Legacy endpoints (disabled by default; require code change):
 
 ## Notifications sync flow (NSE + BSE)
 
-- GitHub Actions triggers `POST /api/jobs/daily` on schedule.
-- Server fetches NSE and BSE corporate announcements in the same cron run (incremental append-only by announcement key).
+- Scheduled runner executes `npm run cron` every 15 minutes (9 AM to 9 PM IST).
+- Cron script runs the 3 pipeline stages directly in backend process.
+- Stage 1: fetch NSE and BSE announcements and append only new rows by announcement key.
 - BSE records are enriched with `isin` using BSE scrip master data (`ListofScripData` API) before storage.
-- New records are deduplicated per exchange and persisted to Postgres snapshot storage.
-- Combined union table (`exchange=NSE+BSE`) and dedup table (`exchange=DEDUP`) are refreshed only when source stores changed.
-- AI classification runs after dedup refresh and targets new/changed dedup rows only.
+- Stage 2: update combined (`exchange=NSE+BSE`) and dedup (`exchange=DEDUP`) tables incrementally.
+- Stage 3: classify dedup rows with AI, prioritizing touched/new rows and backlog controls.
 - If Postgres is unavailable, backend falls back to local JSON files (`NSE_STORAGE_FILE`, `BSE_STORAGE_FILE`, `COMBINED_STORAGE_FILE`, `DEDUP_STORAGE_FILE`, `AI_LABELS_STORAGE_FILE`, `AI_REVIEWS_STORAGE_FILE`).
 - AI labels persist in Postgres snapshot storage and are incrementally appended/updated by key.
 - Reviewed labels are stored separately and returned in Dedup API rows as `review_label`; reviewed mismatches are used to inject learned prompt guidance automatically in later AI runs.
-- Default cron window is `09:00` to `21:00` in `Asia/Kolkata`; runs outside window are skipped unless payload includes `"force": true`.
+- Default cron window is `09:00` to `21:00` in `Asia/Kolkata`; runs outside window are skipped unless `CRON_FORCE_RUN=true` or API payload includes `"force": true`.
 - Notifications data is served via `GET /api/notifications/announcements`.

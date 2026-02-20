@@ -1,20 +1,14 @@
-const cronSecret = process.env.CRON_SECRET ?? "";
-const jobName = process.env.CRON_JOB_NAME ?? "scheduled-maintenance";
+import { closeDatabaseConnections, runDailyPipelineJob } from "./server.js";
 
-function normalizeBaseUrl(value) {
-  const trimmed = value.trim().replace(/\/$/, "");
-  if (!trimmed) {
+const jobName = "notifications-pipeline";
+const trigger = "render-cron";
+
+function normalizeText(value) {
+  if (value === null || value === undefined) {
     return "";
   }
-
-  if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed;
-  }
-
-  return `https://${trimmed}`;
+  return String(value).trim();
 }
-
-const apiBaseUrl = normalizeBaseUrl(process.env.API_BASE_URL ?? "");
 
 function log(message, extra = undefined) {
   const prefix = `[${new Date().toISOString()}] [cron:${jobName}]`;
@@ -26,47 +20,44 @@ function log(message, extra = undefined) {
   console.log(`${prefix} ${message}`, extra);
 }
 
-async function triggerApiJob() {
-  if (!apiBaseUrl) {
-    log("API_BASE_URL not set. Running standalone cron task only.");
-    return;
-  }
+function buildCronPayload() {
+  const payload = { trigger };
 
-  const headers = {
-    "Content-Type": "application/json"
-  };
-
-  if (cronSecret) {
-    headers["x-cron-secret"] = cronSecret;
-  }
-
-  const response = await fetch(`${apiBaseUrl}/api/jobs/daily`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ trigger: "render-cron" })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Cron API trigger failed with status ${response.status}`);
-  }
-
-  const data = await response.json();
-  log("Cron API trigger succeeded", data);
+  return payload;
 }
 
 async function main() {
-  log("Cron run started");
+  const payload = buildCronPayload();
+  log("Cron run started", {
+    trigger: payload.trigger,
+    force: Boolean(payload.force),
+    ai: payload.ai ?? null
+  });
 
-  // Replace this section with your real recurring job logic.
-  log("Executing scheduled task...");
+  const result = await runDailyPipelineJob(payload);
+  log("Cron pipeline result", {
+    ok: result.ok,
+    skipped: result.skipped ?? false,
+    reason: result.reason ?? null,
+    nseNew: result?.nseSync?.newCount ?? null,
+    bseNew: result?.bseSync?.newCount ?? null,
+    dedupTouched: result?.dedupSync?.touchedCount ?? null,
+    aiProcessed: result?.aiClassification?.processedCount ?? null,
+    aiSuccess: result?.aiClassification?.successCount ?? null,
+    aiFailed: result?.aiClassification?.failureCount ?? null
+  });
 
-  await triggerApiJob();
-
-  log("Cron run finished successfully");
+  if (!result.ok) {
+    throw new Error("Daily notifications pipeline completed with errors");
+  }
 }
 
-main().catch((error) => {
-  const message = error instanceof Error ? error.message : "Unknown error";
-  log("Cron failed", { message });
-  process.exit(1);
-});
+main()
+  .catch((error) => {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    log("Cron failed", { message });
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await closeDatabaseConnections();
+  });

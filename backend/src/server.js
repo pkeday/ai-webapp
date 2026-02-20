@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { PDFDocument } from "pdf-lib";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
@@ -115,6 +116,7 @@ let aiChunkRunCount = 0;
 let lastAiChunkRunAt = null;
 let workerHeartbeatCount = 0;
 let lastWorkerHeartbeatAt = null;
+let storeWarmupPromise = null;
 
 const stores = {
   NSE: {
@@ -5126,13 +5128,54 @@ async function executeAiClassificationChunk(params = {}) {
   };
 }
 
-async function handleCronRun(req, res) {
-  if (!requireCronSecret(req, res, "Invalid cron secret.")) {
-    return;
-  }
+function buildOutsideCronWindowPayload(trigger, runCount, runAt, cronWindow) {
+  return {
+    ok: true,
+    skipped: true,
+    reason: "outside-cron-window",
+    runCount,
+    lastCronRunAt: runAt,
+    trigger,
+    cronWindow,
+    nseSync: {
+      exchange: "NSE",
+      trigger,
+      skipped: true,
+      reason: "outside-cron-window"
+    },
+    bseSync: {
+      exchange: "BSE",
+      trigger,
+      skipped: true,
+      reason: "outside-cron-window"
+    },
+    combinedSync: {
+      exchange: "COMBINED",
+      trigger,
+      skipped: true,
+      reason: "outside-cron-window"
+    },
+    dedupSync: {
+      exchange: "DEDUP",
+      trigger,
+      skipped: true,
+      reason: "outside-cron-window"
+    },
+    aiClassification: {
+      trigger,
+      skipped: true,
+      reason: "outside-cron-window",
+      processedCount: 0,
+      successCount: 0,
+      failureCount: 0
+    }
+  };
+}
 
-  const body = await readJsonBody(req);
-  const trigger = String(body.trigger ?? "unknown");
+async function executeDailyPipelineRun(body = {}) {
+  await warmAnnouncementStores();
+
+  const trigger = String(body?.trigger ?? "unknown");
   const forceRun = body?.force === true || normalizeText(body?.force).toLowerCase() === "true";
   const aiConfig = parseAiRequestConfig(body, {
     forceEnabled: false,
@@ -5159,49 +5202,7 @@ async function handleCronRun(req, res) {
   });
 
   if (!cronWindow.withinWindow && !forceRun) {
-    const responsePayload = {
-      ok: true,
-      skipped: true,
-      reason: "outside-cron-window",
-      runCount: cronRunCount,
-      lastCronRunAt,
-      trigger,
-      cronWindow,
-      nseSync: {
-        exchange: "NSE",
-        trigger,
-        skipped: true,
-        reason: "outside-cron-window"
-      },
-      bseSync: {
-        exchange: "BSE",
-        trigger,
-        skipped: true,
-        reason: "outside-cron-window"
-      },
-      combinedSync: {
-        exchange: "COMBINED",
-        trigger,
-        skipped: true,
-        reason: "outside-cron-window"
-      },
-      dedupSync: {
-        exchange: "DEDUP",
-        trigger,
-        skipped: true,
-        reason: "outside-cron-window"
-      },
-      aiClassification: {
-        trigger,
-        skipped: true,
-        reason: "outside-cron-window",
-        processedCount: 0,
-        successCount: 0,
-        failureCount: 0
-      }
-    };
-    sendJson(req, res, 200, responsePayload);
-    return;
+    return buildOutsideCronWindowPayload(trigger, cronRunCount, lastCronRunAt, cronWindow);
   }
 
   const sourceStage = await runSourceSyncStage(trigger);
@@ -5261,13 +5262,41 @@ async function handleCronRun(req, res) {
           }
   };
 
-  if (responsePayload.ok) {
-    sendJson(req, res, 200, responsePayload);
+  if (!responsePayload.ok) {
+    log("Cron sync finished with errors", responsePayload);
+  }
+
+  return responsePayload;
+}
+
+export async function runDailyPipelineJob(body = {}) {
+  return executeDailyPipelineRun(body);
+}
+
+export async function runSourceIngestionJob(trigger = "manual-source-sync") {
+  await warmAnnouncementStores();
+  return runSourceSyncStage(trigger);
+}
+
+export async function runDerivedTablesJob(trigger = "manual-derived-sync", hasNewSourceRows = true) {
+  await warmAnnouncementStores();
+  return runDerivedSyncStage(trigger, hasNewSourceRows);
+}
+
+export async function runAiClassificationJob(trigger = "manual-ai-sync", dedupResult = null, options = {}) {
+  await warmAnnouncementStores();
+  const effectiveDedupResult = dedupResult ?? { status: "fulfilled", value: { touchedDedupKeys: [] } };
+  return runAiClassificationStage(trigger, effectiveDedupResult, options);
+}
+
+async function handleCronRun(req, res) {
+  if (!requireCronSecret(req, res, "Invalid cron secret.")) {
     return;
   }
 
-  log("Cron sync finished with errors", responsePayload);
-  sendJson(req, res, 502, responsePayload);
+  const body = await readJsonBody(req);
+  const responsePayload = await executeDailyPipelineRun(body);
+  sendJson(req, res, responsePayload.ok ? 200 : 502, responsePayload);
 }
 
 async function handleAiOnlyRun(req, res, requestUrl) {
@@ -5569,8 +5598,8 @@ async function handleStatus(req, res) {
       counts: backgroundJobCounts
     },
     pipeline: {
-      mode: "cron-only",
-      cronEndpoint: "/api/jobs/daily",
+      mode: "in-process-pipeline",
+      cronTriggers: ["POST /api/jobs/daily", "npm run cron"],
       cronWindow: {
         enabled: cronWindowEnabled,
         timezone: cronWindowTimezone,
@@ -5771,35 +5800,97 @@ const server = createServer(async (req, res) => {
   }
 });
 
-Promise.all([
-  loadStore("NSE"),
-  loadStore("BSE"),
-  loadStore("COMBINED"),
-  loadStore("DEDUP"),
-  loadAiLabelStore(),
-  loadAiReviewStore(),
-  loadAiSuggestionStore()
-])
-  .catch((error) => {
+function getAnnouncementStoreWarmupTasks() {
+  return [
+    loadStore("NSE"),
+    loadStore("BSE"),
+    loadStore("COMBINED"),
+    loadStore("DEDUP"),
+    loadAiLabelStore(),
+    loadAiReviewStore(),
+    loadAiSuggestionStore()
+  ];
+}
+
+export async function warmAnnouncementStores() {
+  if (!storeWarmupPromise) {
+    storeWarmupPromise = Promise.all(getAnnouncementStoreWarmupTasks()).catch((error) => {
+      storeWarmupPromise = null;
+      throw error;
+    });
+  }
+  return storeWarmupPromise;
+}
+
+export async function closeDatabaseConnections() {
+  if (!databasePool) {
+    return;
+  }
+
+  const pool = databasePool;
+  databasePool = null;
+  databaseReady = false;
+  try {
+    await pool.end();
+  } catch (error) {
+    const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB close error"));
+    log("Failed to close Postgres pool cleanly", { message });
+  }
+}
+
+let shutdownInFlight = null;
+async function shutdownRuntime(exitCode = null) {
+  if (!shutdownInFlight) {
+    shutdownInFlight = (async () => {
+      if (server.listening) {
+        await new Promise((resolveClose) => {
+          server.close(() => {
+            resolveClose();
+          });
+        });
+      }
+      await closeDatabaseConnections();
+    })().finally(() => {
+      shutdownInFlight = null;
+    });
+  }
+
+  await shutdownInFlight;
+  if (Number.isInteger(exitCode)) {
+    process.exit(exitCode);
+  }
+}
+
+async function startApiServer() {
+  try {
+    await warmAnnouncementStores();
+  } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     log("Announcement stores warm-up failed", { message });
-  });
+  }
 
-server.listen(port, "0.0.0.0", () => {
-  log(`Listening on port ${port}`);
-});
+  server.listen(port, "0.0.0.0", () => {
+    log(`Listening on port ${port}`);
+  });
+}
+
+const currentModulePath = fileURLToPath(import.meta.url);
+const processEntryPath = normalizeText(process.argv[1]);
+const isMainModule = processEntryPath ? resolve(processEntryPath) === currentModulePath : false;
+
+if (isMainModule) {
+  startApiServer().catch((error) => {
+    const message = error instanceof Error ? error.message : "Unknown server startup error";
+    log("Server startup failed", { message });
+    process.exit(1);
+  });
+}
 
 process.on("SIGTERM", () => {
   log("SIGTERM received, shutting down");
-  server.close(async () => {
-    if (databasePool) {
-      try {
-        await databasePool.end();
-      } catch (error) {
-        const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB close error"));
-        log("Failed to close Postgres pool cleanly", { message });
-      }
-    }
-    process.exit(0);
+  shutdownRuntime(0).catch((error) => {
+    const message = error instanceof Error ? error.message : "Unknown shutdown error";
+    log("Shutdown failed", { message });
+    process.exit(1);
   });
 });
