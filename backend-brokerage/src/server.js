@@ -1211,6 +1211,7 @@ function handleHealth(req, res) {
     env: appEnv,
     time: new Date().toISOString(),
     authConfigured: isGoogleConfigured(),
+    databaseConfigured: Boolean(databaseUrl),
     databaseEnabled: isDatabaseEnabled()
   });
 }
@@ -1227,6 +1228,7 @@ function handleStatus(req, res) {
     lastWorkerHeartbeatAt: db.cronState.lastWorkerHeartbeatAt,
     totalUsers: db.users.length,
     totalArchives: db.emailArchives.length,
+    databaseConfigured: Boolean(databaseUrl),
     databaseEnabled: isDatabaseEnabled()
   });
 }
