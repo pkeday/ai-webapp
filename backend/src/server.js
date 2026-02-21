@@ -54,6 +54,8 @@ const aiSuggestionsStoragePath = resolve(
 );
 const aiCriteriaVersion = process.env.AI_CRITERIA_VERSION ?? "v2";
 const aiClassifierEnabled = normalizeText(process.env.AI_CLASSIFIER_ENABLED ?? "false").toLowerCase() === "true";
+const aiExtractionAgentEnabled = normalizeText(process.env.AI_EXTRACTION_AGENT_ENABLED ?? "false").toLowerCase() === "true";
+const aiExtractionPolicyFile = normalizeText(process.env.AI_EXTRACTION_POLICY_FILE ?? "");
 const aiPromptLearningMinExamples = Number.parseInt(process.env.AI_PROMPT_LEARNING_MIN_EXAMPLES ?? "1", 10);
 const aiPromptLearningMaxRules = Number.parseInt(process.env.AI_PROMPT_LEARNING_MAX_RULES ?? "8", 10);
 const aiMaxItemsPerCron = Number.parseInt(process.env.AI_MAX_ITEMS_PER_CRON ?? "60", 10);
@@ -74,6 +76,7 @@ const aiEscalationConfidenceThreshold = Number.parseFloat(process.env.AI_ESCALAT
 const aiMinReadableChars = Number.parseInt(process.env.AI_MIN_READABLE_CHARS ?? "700", 10);
 const aiFailureRetryHours = Number.parseInt(process.env.AI_FAILURE_RETRY_HOURS ?? "24", 10);
 const aiTransientFailureRetryMinutes = Number.parseInt(process.env.AI_TRANSIENT_FAILURE_RETRY_MINUTES ?? "60", 10);
+const aiProviderTimeoutMs = Number.parseInt(process.env.AI_PROVIDER_TIMEOUT_MS ?? "60000", 10);
 const aiOpenAiApiKey = normalizeApiKeySecret(process.env.OPENAI_API_KEY ?? "");
 const aiOpenAiBaseUrl = process.env.OPENAI_BASE_URL?.trim().replace(/\/$/, "") || "https://api.openai.com/v1";
 const aiOpenAiStage1Model = "gpt-5-nano";
@@ -297,6 +300,36 @@ const aiJsonSchema = {
   }
 };
 
+const aiExtractionStatuses = new Set(["SUCCESS", "FAILED", "SKIPPED_DISABLED", "SKIPPED_POLICY_NA", "SKIPPED_EMPTY"]);
+const aiExtractionJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["extracted_information", "is_empty", "confidence", "reason", "needs_escalation"],
+  properties: {
+    extracted_information: {
+      type: "string",
+      minLength: 0,
+      maxLength: 1600
+    },
+    is_empty: {
+      type: "boolean"
+    },
+    confidence: {
+      type: "number",
+      minimum: 0,
+      maximum: 1
+    },
+    reason: {
+      type: "string",
+      minLength: 4,
+      maxLength: 600
+    },
+    needs_escalation: {
+      type: "boolean"
+    }
+  }
+};
+
 const aiSystemPromptBaseSections = [
   "You are a strict corporate announcement classifier for Indian listed-company disclosures.",
   "Return ONLY valid JSON matching the required schema.",
@@ -330,6 +363,15 @@ const aiManualPromptRules = [
   "Use substantial_transaction only for sizeable holding changes by non-promoter/non-insider investors; promoter/KMP/insider trades stay in insider_trading or share_pledge as applicable.",
   "Use change_in_auditor for statutory/secretarial auditor appointment, resignation, removal, cessation or replacement disclosures."
 ];
+const aiExtractionSystemPromptSections = [
+  "You are Agent 2: a strict extraction system for Indian listed-company disclosures.",
+  "You are given a pre-classified category from Agent 1 and must extract only what the category policy asks for.",
+  "Return ONLY valid JSON matching the required schema.",
+  "Do not reclassify the document.",
+  "Extract whatever requested fields are available; if some requested fields are not found, explicitly write them as 'missing'.",
+  "Set is_empty=true only when none of the requested information is available at all.",
+  "Set needs_escalation=true when confidence is below 0.8 or evidence is weak."
+];
 
 const aiLabelStore = {
   loaded: false,
@@ -357,6 +399,12 @@ const aiSuggestionStore = {
 const aiPromptLearningCache = {
   fingerprint: "",
   rules: []
+};
+const aiExtractionPolicyCache = {
+  loaded: false,
+  sourcePath: "",
+  byCategory: new Map(),
+  loadedAt: null
 };
 
 const { Pool } = pg;
@@ -546,6 +594,160 @@ function sanitizeSensitiveText(value) {
     .replace(/sk-ant-[A-Za-z0-9_\-]{10,}/g, "[REDACTED_ANTHROPIC_KEY]")
     .replace(/AIza[A-Za-z0-9_\-]{10,}/g, "[REDACTED_GEMINI_KEY]")
     .replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, "Bearer [REDACTED_TOKEN]");
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = aiProviderTimeoutMs) {
+  const safeTimeoutMs = Math.max(3_000, normalizePositiveInt(timeoutMs, 60_000));
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), safeTimeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Provider request timed out after ${safeTimeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+function parseCsvLine(line) {
+  const output = [];
+  let current = "";
+  let inQuotes = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = index + 1 < line.length ? line[index + 1] : "";
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      output.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  output.push(current);
+  return output.map((value) => normalizeText(value));
+}
+
+function normalizeSummaryNeededValue(value) {
+  return normalizeText(value);
+}
+
+function isSummaryNeededNa(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  return normalized === "" || normalized === "na" || normalized === "n/a" || normalized === "none" || normalized === "-";
+}
+
+function normalizeAiExtractionStatus(value) {
+  const normalized = normalizeText(value).toUpperCase();
+  if (!normalized) {
+    return "";
+  }
+  if (!aiExtractionStatuses.has(normalized)) {
+    return "";
+  }
+  return normalized;
+}
+
+function getAiExtractionPolicyCandidatePaths() {
+  const candidates = [];
+  if (aiExtractionPolicyFile) {
+    candidates.push(resolve(process.cwd(), aiExtractionPolicyFile));
+  }
+  candidates.push(resolve(process.cwd(), "../docs/ai_classification_purpose_template.csv"));
+  candidates.push(resolve(process.cwd(), "docs/ai_classification_purpose_template.csv"));
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+async function loadAiExtractionPolicy() {
+  if (aiExtractionPolicyCache.loaded) {
+    return aiExtractionPolicyCache.byCategory;
+  }
+
+  const paths = getAiExtractionPolicyCandidatePaths();
+  let csvText = "";
+  let sourcePath = "";
+  for (const path of paths) {
+    try {
+      csvText = await readFile(path, "utf8");
+      sourcePath = path;
+      break;
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown extraction policy load error"));
+        log("Failed to read extraction policy candidate path", { path, message });
+      }
+    }
+  }
+
+  const byCategory = new Map();
+  if (csvText) {
+    const lines = csvText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (lines.length > 0) {
+      const header = parseCsvLine(lines[0]).map((value) => value.toLowerCase());
+      const categoryIndex = header.indexOf("ai_classification");
+      const summaryNeededIndex = header.indexOf("summary needed");
+      for (let index = 1; index < lines.length; index += 1) {
+        const cells = parseCsvLine(lines[index]);
+        const category = normalizeAiCategory(cells[categoryIndex] ?? "");
+        if (!category) {
+          continue;
+        }
+        byCategory.set(category, {
+          category,
+          summaryNeeded: normalizeSummaryNeededValue(cells[summaryNeededIndex] ?? "")
+        });
+      }
+    }
+  }
+
+  aiExtractionPolicyCache.loaded = true;
+  aiExtractionPolicyCache.byCategory = byCategory;
+  aiExtractionPolicyCache.sourcePath = sourcePath;
+  aiExtractionPolicyCache.loadedAt = new Date().toISOString();
+  log("Loaded extraction policy", {
+    count: byCategory.size,
+    sourcePath: sourcePath || "not-found"
+  });
+  return byCategory;
+}
+
+function getExtractionRuleForCategory(category, policyMap = aiExtractionPolicyCache.byCategory) {
+  const normalized = normalizeAiCategory(category);
+  if (!normalized) {
+    return null;
+  }
+  const map = policyMap instanceof Map ? policyMap : new Map();
+  return map.get(normalized) ?? null;
+}
+
+function categoryNeedsExtraction(category, policyMap = aiExtractionPolicyCache.byCategory) {
+  const rule = getExtractionRuleForCategory(category, policyMap);
+  if (!rule) {
+    return false;
+  }
+  return !isSummaryNeededNa(rule.summaryNeeded);
+}
+
+function getAiExtractionSystemPromptText() {
+  return aiExtractionSystemPromptSections.join("\n");
 }
 
 function isDatabaseEnabled() {
@@ -1698,6 +1900,25 @@ function buildAiInputHash(announcement, criteriaVersion = aiCriteriaVersion) {
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
+function buildAiExtractionInputHash(
+  announcement,
+  classificationLabel,
+  summaryNeeded,
+  criteriaVersion = aiCriteriaVersion
+) {
+  const key = normalizeAnnouncementKey(
+    announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
+  );
+  const payload = {
+    criteriaVersion: normalizeText(criteriaVersion),
+    key: key ?? "",
+    classificationLabel: normalizeAiCategory(classificationLabel),
+    summaryNeeded: normalizeText(summaryNeeded),
+    baseInputHash: buildAiInputHash(announcement, criteriaVersion)
+  };
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
 function normalizeAiCategory(value) {
   return normalizeText(value).toLowerCase();
 }
@@ -2036,7 +2257,28 @@ async function loadAiLabelStore() {
           error: normalizeText(record?.error),
           failureType,
           retryable,
-          promptVersion: normalizeText(record?.promptVersion || aiCriteriaVersion)
+          promptVersion: normalizeText(record?.promptVersion || aiCriteriaVersion),
+          extractionStatus: normalizeAiExtractionStatus(record?.extractionStatus ?? record?.extraction_status),
+          extractionInputHash: normalizeText(record?.extractionInputHash ?? record?.extraction_input_hash),
+          extractionSummary: normalizeText(record?.extractionSummary ?? record?.extraction_summary),
+          extractionReason: normalizeText(record?.extractionReason ?? record?.extraction_reason),
+          extractionConfidence: clampConfidence(record?.extractionConfidence ?? record?.extraction_confidence ?? 0),
+          extractionNeedsEscalation: Boolean(record?.extractionNeedsEscalation ?? record?.extraction_needs_escalation),
+          extractionProvider: normalizeText(record?.extractionProvider ?? record?.extraction_provider),
+          extractionModel: normalizeText(record?.extractionModel ?? record?.extraction_model),
+          extractionAttempt: normalizePositiveInt(Number(record?.extractionAttempt ?? record?.extraction_attempt ?? 1), 1),
+          extractionPolicySummaryNeeded: normalizeText(
+            record?.extractionPolicySummaryNeeded ?? record?.extraction_policy_summary_needed
+          ),
+          extractionPromptVersion: normalizeText(record?.extractionPromptVersion ?? record?.extraction_prompt_version),
+          extractionError: normalizeText(record?.extractionError ?? record?.extraction_error),
+          extractionFailureType: normalizeAiFailureType(record?.extractionFailureType ?? record?.extraction_failure_type),
+          extractionRetryable:
+            record?.extractionRetryable === undefined || record?.extractionRetryable === null
+              ? isTransientAiFailureType(
+                  normalizeAiFailureType(record?.extractionFailureType ?? record?.extraction_failure_type)
+                )
+              : Boolean(record?.extractionRetryable ?? record?.extraction_retryable)
         };
       })
       .filter((record) => Boolean(record.dedupAnnouncementKey));
@@ -2991,9 +3233,65 @@ function buildClassificationUserPrompt(announcement, criteriaVersion, textSnippe
   ].join("\n");
 }
 
+function normalizeAiExtractionOutput(output) {
+  const extractedInformation = normalizeText(output?.extracted_information);
+  const reason = normalizeText(output?.reason);
+  const confidence = clampConfidence(output?.confidence);
+  const hasExtractedText = extractedInformation.length > 0;
+  const isEmpty = hasExtractedText ? false : Boolean(output?.is_empty) || extractedInformation.length === 0;
+  const needsEscalation = !isEmpty && (Boolean(output?.needs_escalation) || confidence < clampConfidence(aiEscalationConfidenceThreshold));
+
+  if (!reason) {
+    throw new Error("Missing extraction reason");
+  }
+
+  return {
+    extractedInformation: isEmpty ? "" : extractedInformation,
+    isEmpty,
+    confidence,
+    reason,
+    needsEscalation
+  };
+}
+
+function buildExtractionUserPrompt(announcement, criteriaVersion, category, summaryNeeded, textSnippet) {
+  const symbol = normalizeText(announcement?.symbol) || "-";
+  const company = normalizeText(announcement?.company) || "-";
+  const type = normalizeText(announcement?.type) || "-";
+  const timestamp = normalizeText(announcement?.timestamp) || "-";
+  const isin = normalizeIsin(announcement?.isin) || "-";
+  const sourceExchange = normalizeText(announcement?.exchange) || "DEDUP";
+  const sourceKey = normalizeAnnouncementKey(
+    announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
+  );
+  const excerpt = normalizeText(textSnippet).slice(0, 80_000);
+
+  return [
+    `criteria_version: ${criteriaVersion}`,
+    `source_key: ${sourceKey ?? "-"}`,
+    `exchange: ${sourceExchange}`,
+    `symbol: ${symbol}`,
+    `company: ${company}`,
+    `isin: ${isin}`,
+    `announced_type: ${type}`,
+    `timestamp: ${timestamp}`,
+    `classified_category: ${normalizeAiCategory(category) || "-"}`,
+    "",
+    "Extraction target (from policy CSV Summary Needed):",
+    normalizeText(summaryNeeded) || "No target provided",
+    "",
+    "Extract only the requested information for this category.",
+    "Return the output as concise key-value lines.",
+    "If some requested values are missing, include those keys with value 'missing' and still return available values.",
+    "Set is_empty=true only if none of the requested values can be extracted.",
+    "Document text excerpt:",
+    excerpt || "(No machine-readable text extracted)"
+  ].join("\n");
+}
+
 async function classifyWithOpenAi(model, prompt, apiKey, baseUrl) {
   const systemPrompt = getAiSystemPromptText();
-  const response = await fetch(`${baseUrl}/responses`, {
+  const response = await fetchWithTimeout(`${baseUrl}/responses`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -3055,7 +3353,7 @@ async function classifyWithOpenAi(model, prompt, apiKey, baseUrl) {
 
 async function classifyWithAnthropic(model, prompt, apiKey, baseUrl) {
   const systemPrompt = getAiSystemPromptText();
-  const response = await fetch(`${baseUrl}/messages`, {
+  const response = await fetchWithTimeout(`${baseUrl}/messages`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -3112,7 +3410,7 @@ async function classifyWithGemini(model, prompt, apiKey, baseUrl, extraParts = [
     }
   }
 
-  const response = await fetch(`${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+  const response = await fetchWithTimeout(`${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -3184,6 +3482,468 @@ async function classifyWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
       }
     }
   ]);
+}
+
+async function extractWithOpenAi(model, prompt, apiKey, baseUrl) {
+  const systemPrompt = getAiExtractionSystemPromptText();
+  const response = await fetchWithTimeout(`${baseUrl}/responses`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: systemPrompt
+            }
+          ]
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: prompt
+            }
+          ]
+        }
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "announcement_extraction",
+          schema: aiExtractionJsonSchema,
+          strict: true
+        }
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const body = sanitizeSensitiveText(await response.text());
+    throw new Error(`OpenAI HTTP ${response.status}: ${body.slice(0, 300)}`);
+  }
+
+  const payload = await response.json();
+  const outputText =
+    normalizeText(payload?.output_text) ||
+    normalizeText(
+      payload?.output?.flatMap((item) => (Array.isArray(item?.content) ? item.content : []))
+        ?.map((contentItem) => contentItem?.text ?? "")
+        ?.join(" ")
+    );
+  const parsed = extractFirstJsonObject(outputText);
+  if (!parsed) {
+    throw new Error("OpenAI response did not return JSON");
+  }
+  return normalizeAiExtractionOutput(parsed);
+}
+
+async function extractWithAnthropic(model, prompt, apiKey, baseUrl) {
+  const systemPrompt = getAiExtractionSystemPromptText();
+  const response = await fetchWithTimeout(`${baseUrl}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 550,
+      temperature: 0,
+      system: systemPrompt,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: prompt
+            }
+          ]
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const body = sanitizeSensitiveText(await response.text());
+    throw new Error(`Anthropic HTTP ${response.status}: ${body.slice(0, 300)}`);
+  }
+
+  const payload = await response.json();
+  const outputText = normalizeText(
+    payload?.content
+      ?.map((part) => normalizeText(part?.text))
+      .filter(Boolean)
+      .join(" ")
+  );
+  const parsed = extractFirstJsonObject(outputText);
+  if (!parsed) {
+    throw new Error("Anthropic response did not return JSON");
+  }
+  return normalizeAiExtractionOutput(parsed);
+}
+
+async function extractWithGemini(model, prompt, apiKey, baseUrl, extraParts = []) {
+  const systemPrompt = getAiExtractionSystemPromptText();
+  const parts = [{ text: prompt }];
+  if (Array.isArray(extraParts) && extraParts.length > 0) {
+    for (const part of extraParts) {
+      if (part && typeof part === "object") {
+        parts.push(part);
+      }
+    }
+  }
+
+  const response = await fetchWithTimeout(`${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [
+          {
+            text: systemPrompt
+          }
+        ]
+      },
+      contents: [
+        {
+          role: "user",
+          parts
+        }
+      ],
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: "application/json",
+        responseSchema: aiExtractionJsonSchema
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const body = sanitizeSensitiveText(await response.text());
+    throw new Error(`Gemini HTTP ${response.status}: ${body.slice(0, 300)}`);
+  }
+
+  const payload = await response.json();
+  const outputText = normalizeText(
+    payload?.candidates?.[0]?.content?.parts
+      ?.map((part) => normalizeText(part?.text))
+      .filter(Boolean)
+      .join(" ")
+  );
+  const parsed = extractFirstJsonObject(outputText);
+  if (!parsed) {
+    throw new Error("Gemini response did not return JSON");
+  }
+  return normalizeAiExtractionOutput(parsed);
+}
+
+async function extractWithGeminiText(model, prompt, apiKey, baseUrl) {
+  return extractWithGemini(model, prompt, apiKey, baseUrl, []);
+}
+
+async function extractWithGeminiPdf(model, prompt, pdfBytes, apiKey, baseUrl) {
+  const safeMaxPdfBytes = Math.max(1_048_576, normalizePositiveInt(aiGeminiMaxPdfBytes, 12 * 1024 * 1024));
+  if (!Buffer.isBuffer(pdfBytes) || pdfBytes.length < 256) {
+    throw createAiPipelineError("input_invalid", "Missing PDF bytes for Gemini extraction", { transient: false });
+  }
+  if (pdfBytes.length > safeMaxPdfBytes) {
+    throw createAiPipelineError(
+      "input_invalid",
+      `PDF too large for Gemini inline upload (${pdfBytes.length} bytes > ${safeMaxPdfBytes} bytes)`,
+      { transient: false }
+    );
+  }
+
+  return extractWithGemini(model, prompt, apiKey, baseUrl, [
+    {
+      inlineData: {
+        mimeType: "application/pdf",
+        data: pdfBytes.toString("base64")
+      }
+    }
+  ]);
+}
+
+async function extractDedupAnnouncementInsights(announcement, classificationLabel, summaryNeeded) {
+  const dedupAnnouncementKey = normalizeAnnouncementKey(
+    announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
+  );
+  if (!dedupAnnouncementKey) {
+    throw createAiPipelineError("input_invalid", "Missing dedup announcement key", { transient: false });
+  }
+
+  const attachmentUrl = normalizeText(announcement?.attachment_url);
+  if (!attachmentUrl) {
+    throw createAiPipelineError("input_invalid", "Missing attachment URL", { transient: false });
+  }
+
+  const preparedPdf = await preparePdfForClassification(attachmentUrl);
+  let pdfBuffer = preparedPdf.pdfBuffer;
+  const stage1Pdf = preparedPdf.stage1Pdf;
+  const stage1Text = preparedPdf.stage1Text;
+  const hasExtractedText = !preparedPdf.usedRawPdfFallback && stage1Text.textLength > 0;
+  const machineReadable = hasExtractedText && stage1Text.textLength >= normalizePositiveInt(aiMinReadableChars, 700);
+  const criteriaVersion = aiCriteriaVersion;
+  const extractionInputHash = buildAiExtractionInputHash(announcement, classificationLabel, summaryNeeded, criteriaVersion);
+
+  if (hasExtractedText) {
+    preparedPdf.pdfBuffer = null;
+    pdfBuffer = null;
+  }
+
+  const stage1Prompt = buildExtractionUserPrompt(
+    announcement,
+    criteriaVersion,
+    classificationLabel,
+    summaryNeeded,
+    stage1Text.text
+  );
+  const stage1Errors = [];
+  const captureProviderError = (provider, error, targetList) => {
+    const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown error"));
+    targetList.push(`${provider}: ${message.slice(0, 220)}`);
+  };
+
+  const extractWithStage1Chain = async () => {
+    if (hasExtractedText) {
+      if (aiOpenAiApiKey) {
+        try {
+          return {
+            ...(await extractWithOpenAi(aiOpenAiStage1Model, stage1Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
+            provider: "openai",
+            model: aiOpenAiStage1Model
+          };
+        } catch (error) {
+          captureProviderError("openai", error, stage1Errors);
+        }
+      }
+
+      if (aiAnthropicApiKey) {
+        try {
+          return {
+            ...(await extractWithAnthropic(aiAnthropicStage1Model, stage1Prompt, aiAnthropicApiKey, aiAnthropicBaseUrl)),
+            provider: "anthropic",
+            model: aiAnthropicStage1Model
+          };
+        } catch (error) {
+          captureProviderError("anthropic", error, stage1Errors);
+        }
+      }
+
+      if (aiGeminiApiKey) {
+        try {
+          return {
+            ...(await extractWithGeminiText(aiGeminiStage1Model, stage1Prompt, aiGeminiApiKey, aiGeminiBaseUrl)),
+            provider: "gemini",
+            model: aiGeminiStage1Model
+          };
+        } catch (error) {
+          captureProviderError("gemini", error, stage1Errors);
+        }
+      }
+    }
+
+    if (!hasExtractedText && aiGeminiApiKey) {
+      try {
+        return {
+          ...(await extractWithGeminiPdf(aiGeminiStage1Model, stage1Prompt, stage1Pdf.bytes, aiGeminiApiKey, aiGeminiBaseUrl)),
+          provider: "gemini",
+          model: aiGeminiStage1Model
+        };
+      } catch (error) {
+        captureProviderError("gemini", error, stage1Errors);
+      }
+    }
+
+    if (!hasExtractedText) {
+      if (aiAnthropicApiKey) {
+        try {
+          return {
+            ...(await extractWithAnthropic(aiAnthropicStage1Model, stage1Prompt, aiAnthropicApiKey, aiAnthropicBaseUrl)),
+            provider: "anthropic",
+            model: aiAnthropicStage1Model
+          };
+        } catch (error) {
+          captureProviderError("anthropic", error, stage1Errors);
+        }
+      }
+
+      if (aiOpenAiApiKey) {
+        try {
+          return {
+            ...(await extractWithOpenAi(aiOpenAiStage1Model, stage1Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
+            provider: "openai",
+            model: aiOpenAiStage1Model
+          };
+        } catch (error) {
+          captureProviderError("openai", error, stage1Errors);
+        }
+      }
+    }
+
+    throw new Error(
+      stage1Errors.length > 0 ? `Stage 1 extraction failed: ${stage1Errors.join(" | ")}` : "No AI provider key configured"
+    );
+  };
+
+  const stage1 = await extractWithStage1Chain();
+  let finalResult = stage1;
+  let pagesProcessed = stage1Pdf.pagesProcessed;
+  const confidenceThreshold = clampConfidence(aiEscalationConfidenceThreshold);
+  const shouldEscalate = !stage1.isEmpty && (stage1.needsEscalation || stage1.confidence < confidenceThreshold);
+
+  if (shouldEscalate) {
+    let stage2Pdf = stage1Pdf;
+    let stage2Text = hasExtractedText ? stage1Text : null;
+
+    if (machineReadable) {
+      try {
+        const escalationFetched = await fetchBinary(attachmentUrl, aiPdfFetchTimeoutMs, {
+          browserLikeHeaders: true
+        });
+        const escalationPdfBuffer = escalationFetched.bytes;
+        stage2Pdf = await slicePdfToFirstPages(escalationPdfBuffer, aiEscalationMaxPages);
+        pagesProcessed = stage2Pdf.pagesProcessed;
+        stage2Text = await extractTextFromPdfPages(stage2Pdf.bytes, stage2Pdf.pagesProcessed);
+      } catch {
+        stage2Pdf = stage1Pdf;
+        stage2Text = stage1Text;
+      }
+    } else {
+      stage2Pdf = {
+        totalPages: stage1Pdf.totalPages,
+        pagesProcessed: stage1Pdf.pagesProcessed,
+        bytes: pdfBuffer ?? stage1Pdf.bytes
+      };
+      pagesProcessed = stage2Pdf.pagesProcessed;
+    }
+
+    const stage2Prompt = buildExtractionUserPrompt(
+      announcement,
+      criteriaVersion,
+      classificationLabel,
+      summaryNeeded,
+      hasExtractedText ? stage2Text?.text ?? stage1Text.text : stage1Text.text
+    );
+
+    const stage2Errors = [];
+    const extractWithStage2Chain = async () => {
+      if (hasExtractedText) {
+        if (aiOpenAiApiKey) {
+          try {
+            return {
+              ...(await extractWithOpenAi(aiOpenAiStage2Model, stage2Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
+              provider: "openai",
+              model: aiOpenAiStage2Model
+            };
+          } catch (error) {
+            captureProviderError("openai", error, stage2Errors);
+          }
+        }
+
+        if (aiAnthropicApiKey) {
+          try {
+            return {
+              ...(await extractWithAnthropic(aiAnthropicStage2Model, stage2Prompt, aiAnthropicApiKey, aiAnthropicBaseUrl)),
+              provider: "anthropic",
+              model: aiAnthropicStage2Model
+            };
+          } catch (error) {
+            captureProviderError("anthropic", error, stage2Errors);
+          }
+        }
+
+        if (aiGeminiApiKey) {
+          try {
+            return {
+              ...(await extractWithGeminiText(aiGeminiStage2Model, stage2Prompt, aiGeminiApiKey, aiGeminiBaseUrl)),
+              provider: "gemini",
+              model: aiGeminiStage2Model
+            };
+          } catch (error) {
+            captureProviderError("gemini", error, stage2Errors);
+          }
+        }
+      }
+
+      if (!hasExtractedText && aiGeminiApiKey) {
+        try {
+          return {
+            ...(await extractWithGeminiPdf(aiGeminiStage2Model, stage2Prompt, stage2Pdf.bytes, aiGeminiApiKey, aiGeminiBaseUrl)),
+            provider: "gemini",
+            model: aiGeminiStage2Model
+          };
+        } catch (error) {
+          captureProviderError("gemini", error, stage2Errors);
+        }
+      }
+
+      if (!hasExtractedText) {
+        if (aiAnthropicApiKey) {
+          try {
+            return {
+              ...(await extractWithAnthropic(aiAnthropicStage2Model, stage2Prompt, aiAnthropicApiKey, aiAnthropicBaseUrl)),
+              provider: "anthropic",
+              model: aiAnthropicStage2Model
+            };
+          } catch (error) {
+            captureProviderError("anthropic", error, stage2Errors);
+          }
+        }
+
+        if (aiOpenAiApiKey) {
+          try {
+            return {
+              ...(await extractWithOpenAi(aiOpenAiStage2Model, stage2Prompt, aiOpenAiApiKey, aiOpenAiBaseUrl)),
+              provider: "openai",
+              model: aiOpenAiStage2Model
+            };
+          } catch (error) {
+            captureProviderError("openai", error, stage2Errors);
+          }
+        }
+      }
+
+      throw new Error(
+        stage2Errors.length > 0 ? `Stage 2 extraction failed: ${stage2Errors.join(" | ")}` : "No AI provider key configured for escalation"
+      );
+    };
+
+    finalResult = await extractWithStage2Chain();
+  }
+
+  pdfBuffer = null;
+  return {
+    dedupAnnouncementKey,
+    extractionInputHash,
+    extractionStatus: finalResult.isEmpty ? "SKIPPED_EMPTY" : "SUCCESS",
+    extractionSummary: finalResult.isEmpty ? "" : finalResult.extractedInformation,
+    extractionReason: finalResult.reason,
+    extractionConfidence: finalResult.confidence,
+    extractionNeedsEscalation: finalResult.needsEscalation,
+    extractionProvider: finalResult.provider,
+    extractionModel: finalResult.model,
+    extractionAttempt: shouldEscalate ? 2 : 1,
+    extractionPolicySummaryNeeded: normalizeText(summaryNeeded),
+    extractionPromptVersion: aiCriteriaVersion,
+    extractionError: "",
+    extractionFailureType: "",
+    extractionRetryable: false,
+    extractionPagesProcessed: pagesProcessed,
+    extractionTotalPages: stage1Pdf.totalPages
+  };
 }
 
 async function classifyDedupAnnouncement(announcement) {
@@ -3454,6 +4214,74 @@ async function classifyDedupAnnouncement(announcement) {
   };
 }
 
+async function runAgent2ExtractionForAnnouncement(announcement, classificationResult, extractionPolicyMap) {
+  const dedupAnnouncementKey = normalizeAnnouncementKey(
+    announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
+  );
+  const fallback = {
+    dedupAnnouncementKey,
+    extractionStatus: "SKIPPED_DISABLED",
+    extractionInputHash: "",
+    extractionSummary: "",
+    extractionReason: "",
+    extractionConfidence: 0,
+    extractionNeedsEscalation: false,
+    extractionProvider: "",
+    extractionModel: "",
+    extractionAttempt: 0,
+    extractionPolicySummaryNeeded: "",
+    extractionPromptVersion: aiCriteriaVersion,
+    extractionError: "",
+    extractionFailureType: "",
+    extractionRetryable: false
+  };
+
+  if (!aiExtractionAgentEnabled) {
+    return fallback;
+  }
+
+  const label = normalizeAiCategory(classificationResult?.label);
+  if (!label) {
+    return {
+      ...fallback,
+      extractionStatus: "FAILED",
+      extractionError: "Missing classification label for extraction",
+      extractionFailureType: "input_invalid",
+      extractionRetryable: false
+    };
+  }
+
+  const rule = getExtractionRuleForCategory(label, extractionPolicyMap);
+  const summaryNeeded = normalizeText(rule?.summaryNeeded);
+  if (!rule || isSummaryNeededNa(summaryNeeded)) {
+    return {
+      ...fallback,
+      extractionStatus: "SKIPPED_POLICY_NA",
+      extractionInputHash: buildAiExtractionInputHash(announcement, label, summaryNeeded, aiCriteriaVersion),
+      extractionPolicySummaryNeeded: summaryNeeded
+    };
+  }
+
+  try {
+    const extraction = await extractDedupAnnouncementInsights(announcement, label, summaryNeeded);
+    return {
+      ...fallback,
+      ...extraction
+    };
+  } catch (error) {
+    const failure = classifyAiFailure(error);
+    return {
+      ...fallback,
+      extractionStatus: "FAILED",
+      extractionInputHash: buildAiExtractionInputHash(announcement, label, summaryNeeded, aiCriteriaVersion),
+      extractionPolicySummaryNeeded: summaryNeeded,
+      extractionError: failure.message,
+      extractionFailureType: failure.failureType,
+      extractionRetryable: failure.retryable
+    };
+  }
+}
+
 async function runAiClassificationCron(trigger, touchedDedupKeys = [], options = {}) {
   const forceEnabled = options?.forceEnabled === true;
   const retryFailed = options?.retryFailed === true;
@@ -3471,6 +4299,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     ? Math.max(0, Math.min(0.9, backlogShareRaw))
     : Math.max(0, Math.min(0.9, Number.isFinite(aiPendingBacklogShare) ? aiPendingBacklogShare : 0.4));
   await Promise.all([loadAiLabelStore(), loadAiReviewStore()]);
+  const extractionPolicyMap = aiExtractionAgentEnabled ? await loadAiExtractionPolicy() : new Map();
 
   if (!aiClassifierEnabled && !forceEnabled) {
     return {
@@ -3540,6 +4369,22 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     legacyFailureRetryWindowMs,
     normalizePositiveInt(aiTransientFailureRetryMinutes, 60) * 60 * 1000
   );
+  const hasFreshExtractionForRecord = (record, item) => {
+    if (!aiExtractionAgentEnabled) {
+      return true;
+    }
+    const label = normalizeAiCategory(record?.label);
+    if (!categoryNeedsExtraction(label, extractionPolicyMap)) {
+      return true;
+    }
+    const rule = getExtractionRuleForCategory(label, extractionPolicyMap);
+    const expectedHash = buildAiExtractionInputHash(item, label, rule?.summaryNeeded ?? "", aiCriteriaVersion);
+    const extractionStatus = normalizeAiExtractionStatus(record?.extractionStatus);
+    if (!extractionStatus || extractionStatus === "FAILED") {
+      return false;
+    }
+    return normalizeText(record?.extractionInputHash) === expectedHash;
+  };
 
   const considerQueueCandidate = (item) => {
     const dedupAnnouncementKey = normalizeAnnouncementKey(
@@ -3560,13 +4405,22 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     const inputHash = buildAiInputHash(item, aiCriteriaVersion);
     const existingRecord = getAiLabelRecordForKey(dedupAnnouncementKey);
     if (!forceReclassify) {
-      if (
+      const hasFreshClassification =
         existingRecord &&
         existingRecord.status === "SUCCESS" &&
         normalizeText(existingRecord.criteriaVersion) === aiCriteriaVersion &&
-        normalizeText(existingRecord.inputHash) === inputHash
-      ) {
-        skippedExistingCount += 1;
+        normalizeText(existingRecord.inputHash) === inputHash;
+
+      if (hasFreshClassification) {
+        if (hasFreshExtractionForRecord(existingRecord, item)) {
+          skippedExistingCount += 1;
+          return;
+        }
+        queue.push({
+          announcement: item,
+          extractOnly: true,
+          existingRecord
+        });
         return;
       }
 
@@ -3599,7 +4453,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
       }
 
       const hashRecord = aiLabelStore.byInputHash.get(inputHash);
-      if (hashRecord && hashRecord.status === "SUCCESS") {
+      if (hashRecord && hashRecord.status === "SUCCESS" && hasFreshExtractionForRecord(hashRecord, item)) {
         upsertAiLabelRecord({
           ...hashRecord,
           dedupAnnouncementKey,
@@ -3610,7 +4464,11 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
       }
     }
 
-    queue.push(item);
+    queue.push({
+      announcement: item,
+      extractOnly: false,
+      existingRecord
+    });
   };
 
   for (const item of candidates) {
@@ -3679,17 +4537,53 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     return checkpointPersistChain;
   };
 
-  const classifyQueueItem = async (announcement) => {
+  const classifyQueueItem = async (queueItem) => {
+    const announcement = queueItem?.announcement ?? queueItem;
+    const extractOnly = queueItem?.extractOnly === true;
+    const existingRecord = queueItem?.existingRecord ?? null;
     const dedupAnnouncementKey = normalizeAnnouncementKey(
       announcement?.dedupAnnouncementKey ?? announcement?.mergedAnnouncementKey ?? announcement?.announcementKey
     );
     const inputHash = buildAiInputHash(announcement, aiCriteriaVersion);
 
     try {
+      if (extractOnly && existingRecord && existingRecord.status === "SUCCESS") {
+        const extraction = await runAgent2ExtractionForAnnouncement(
+          announcement,
+          { label: existingRecord.label },
+          extractionPolicyMap
+        );
+        upsertAiLabelRecord({
+          ...existingRecord,
+          dedupAnnouncementKey,
+          inputHash,
+          ...extraction
+        });
+        await scheduleCheckpointPersist(false);
+        return {
+          key: dedupAnnouncementKey,
+          ok: true,
+          provider: existingRecord.provider,
+          model: existingRecord.model,
+          extractionStatus: normalizeAiExtractionStatus(extraction?.extractionStatus),
+          mode: "extract-only"
+        };
+      }
+
       const result = await classifyDedupAnnouncement(announcement);
-      upsertAiLabelRecord(result);
+      const extraction = await runAgent2ExtractionForAnnouncement(announcement, result, extractionPolicyMap);
+      upsertAiLabelRecord({
+        ...result,
+        ...extraction
+      });
       await scheduleCheckpointPersist(false);
-      return { key: dedupAnnouncementKey, ok: true, provider: result.provider, model: result.model };
+      return {
+        key: dedupAnnouncementKey,
+        ok: true,
+        provider: result.provider,
+        model: result.model,
+        extractionStatus: normalizeAiExtractionStatus(extraction?.extractionStatus)
+      };
     } catch (error) {
       const failure = classifyAiFailure(error);
       upsertAiLabelRecord({
@@ -3834,6 +4728,12 @@ function enrichDedupAnnouncementWithAi(announcement) {
       ai_failure_type: null,
       ai_retryable: null,
       ai_status: "MISSING",
+      ai_extraction_status: null,
+      ai_extraction_summary: null,
+      ai_extraction_reason: null,
+      ai_extraction_confidence: null,
+      ai_extraction_error: null,
+      ai_extraction_failure_type: null,
       review_label: reviewLabel,
       review_notes: reviewNotes,
       reviewed_at: reviewedAt
@@ -3857,6 +4757,17 @@ function enrichDedupAnnouncementWithAi(announcement) {
     ai_status: aiStatus || "UNKNOWN",
     ai_provider: aiRecord.provider || null,
     ai_model: aiRecord.model || null,
+    ai_extraction_status: normalizeAiExtractionStatus(aiRecord.extractionStatus) || null,
+    ai_extraction_summary: normalizeText(aiRecord.extractionSummary) || null,
+    ai_extraction_reason: normalizeText(aiRecord.extractionReason) || null,
+    ai_extraction_confidence:
+      normalizeAiExtractionStatus(aiRecord.extractionStatus) === "SUCCESS" ? clampConfidence(aiRecord.extractionConfidence) : null,
+    ai_extraction_error:
+      normalizeAiExtractionStatus(aiRecord.extractionStatus) === "FAILED" ? normalizeText(aiRecord.extractionError) || null : null,
+    ai_extraction_failure_type:
+      normalizeAiExtractionStatus(aiRecord.extractionStatus) === "FAILED"
+        ? normalizeAiFailureType(aiRecord.extractionFailureType)
+        : null,
     review_label: reviewLabel,
     review_notes: reviewNotes,
     reviewed_at: reviewedAt
@@ -6254,6 +7165,26 @@ async function handleStatus(req, res) {
   const aiFailureCount = aiLabelStore.records.filter(
     (record) => normalizeText(record?.criteriaVersion) === aiCriteriaVersion && normalizeText(record?.status) === "FAILED"
   ).length;
+  const aiExtractionSuccessCount = aiLabelStore.records.filter(
+    (record) =>
+      normalizeText(record?.criteriaVersion) === aiCriteriaVersion &&
+      normalizeAiExtractionStatus(record?.extractionStatus) === "SUCCESS"
+  ).length;
+  const aiExtractionSkippedPolicyNaCount = aiLabelStore.records.filter(
+    (record) =>
+      normalizeText(record?.criteriaVersion) === aiCriteriaVersion &&
+      normalizeAiExtractionStatus(record?.extractionStatus) === "SKIPPED_POLICY_NA"
+  ).length;
+  const aiExtractionSkippedEmptyCount = aiLabelStore.records.filter(
+    (record) =>
+      normalizeText(record?.criteriaVersion) === aiCriteriaVersion &&
+      normalizeAiExtractionStatus(record?.extractionStatus) === "SKIPPED_EMPTY"
+  ).length;
+  const aiExtractionFailureCount = aiLabelStore.records.filter(
+    (record) =>
+      normalizeText(record?.criteriaVersion) === aiCriteriaVersion &&
+      normalizeAiExtractionStatus(record?.extractionStatus) === "FAILED"
+  ).length;
   const aiReviewDiagnostics = buildAiReviewDiagnostics();
   const backgroundJobCounts = isDatabaseEnabled() && enableLegacyJobEndpoints
     ? await getBackgroundJobStatusCounts().catch((error) => {
@@ -6290,6 +7221,7 @@ async function handleStatus(req, res) {
     lastDedupSyncStats: stores.DEDUP.lastSyncStats,
     aiCriteriaVersion,
     aiClassifierEnabled,
+    aiExtractionAgentEnabled,
     aiProviderKeysConfigured: {
       openai: Boolean(aiOpenAiApiKey),
       gemini: Boolean(aiGeminiApiKey),
@@ -6299,6 +7231,10 @@ async function handleStatus(req, res) {
     aiLabelsCount: aiLabelStore.records.length,
     aiLabelsSuccessCount: aiSuccessCount,
     aiLabelsFailureCount: aiFailureCount,
+    aiExtractionSuccessCount,
+    aiExtractionSkippedPolicyNaCount,
+    aiExtractionSkippedEmptyCount,
+    aiExtractionFailureCount,
     aiLabelsLastSyncAt: aiLabelStore.lastSyncAt,
     aiReviewsCount: aiReviewStore.records.length,
     aiReviewsLastSyncAt: aiReviewStore.lastSyncAt,

@@ -1365,12 +1365,12 @@ function renderNotifications() {
   }
 
   if (state.notifications.loading) {
-    refs.notificationsTable.innerHTML = '<tr><td colspan="10"><div class="empty-state">Loading announcements...</div></td></tr>';
+    refs.notificationsTable.innerHTML = '<tr><td colspan="12"><div class="empty-state">Loading announcements...</div></td></tr>';
     return;
   }
 
   if (state.notifications.error) {
-    refs.notificationsTable.innerHTML = `<tr><td colspan="10"><div class="empty-state">Failed to load announcements: ${escapeHtml(
+    refs.notificationsTable.innerHTML = `<tr><td colspan="12"><div class="empty-state">Failed to load announcements: ${escapeHtml(
       state.notifications.error
     )}</div></td></tr>`;
     return;
@@ -1378,7 +1378,7 @@ function renderNotifications() {
 
   if (state.notifications.items.length === 0) {
     refs.notificationsTable.innerHTML =
-      '<tr><td colspan="10"><div class="empty-state">No announcements found for the selected filter.</div></td></tr>';
+      '<tr><td colspan="12"><div class="empty-state">No announcements found for the selected filter.</div></td></tr>';
     return;
   }
 
@@ -1402,6 +1402,8 @@ function renderNotifications() {
       let attachmentUrl = null;
       let aiLabel = "-";
       let aiNotes = "-";
+      let extractionStatus = "-";
+      let extractionInfo = "-";
       let reviewColumn = "-";
       let reviewActionColumn = "-";
 
@@ -1437,6 +1439,7 @@ function renderNotifications() {
         attachmentUrl = item.attachment_url || null;
         const normalizedExchange = String(state.notifications.exchange || "").toUpperCase();
         const aiStatus = String(item.ai_status || "").toUpperCase();
+        const extractionStatusRaw = String(item.ai_extraction_status || "").toUpperCase();
         if (normalizedExchange === "DEDUP") {
           if (aiStatus === "SUCCESS" && item.ai_label) {
             const confidence = Number(item.ai_confidence);
@@ -1451,6 +1454,26 @@ function renderNotifications() {
           } else if (aiStatus === "MISSING") {
             aiLabel = "Pending";
             aiNotes = "Awaiting AI classification";
+          }
+
+          extractionStatus = formatExtractionStatusLabel(extractionStatusRaw);
+          const extractionSummary = String(item.ai_extraction_summary || "").trim();
+          const extractionReason = String(item.ai_extraction_reason || "").trim();
+          const extractionError = String(item.ai_extraction_error || "").trim();
+          if (extractionSummary) {
+            extractionInfo = extractionSummary;
+          } else if (extractionStatusRaw === "FAILED") {
+            extractionInfo = extractionError || extractionReason || "Extraction failed";
+          } else if (extractionStatusRaw === "SKIPPED_POLICY_NA") {
+            extractionInfo = "Not required by category policy";
+          } else if (extractionStatusRaw === "SKIPPED_EMPTY") {
+            extractionInfo = extractionReason || "Requested fields not found";
+          } else if (extractionStatusRaw === "SKIPPED_DISABLED") {
+            extractionInfo = "Extraction agent disabled";
+          } else if (aiStatus === "MISSING") {
+            extractionInfo = "Pending classification";
+          } else {
+            extractionInfo = extractionReason || "-";
           }
         }
 
@@ -1480,6 +1503,8 @@ function renderNotifications() {
       const timestampLabel = formatNotificationTimestamp(timestamp);
       const aiNotesText = String(aiNotes || "-");
       const aiNotesDisplay = aiNotesText.length > 180 ? `${aiNotesText.slice(0, 177)}...` : aiNotesText;
+      const extractionInfoText = String(extractionInfo || "-");
+      const extractionInfoDisplay = extractionInfoText.length > 180 ? `${extractionInfoText.slice(0, 177)}...` : extractionInfoText;
 
       if (isDedupView) {
         const dedupAnnouncementKey = getDedupAnnouncementKey(item);
@@ -1523,6 +1548,8 @@ function renderNotifications() {
           <td>${escapeHtml(type)}</td>
           <td>${escapeHtml(aiLabel)}</td>
           <td title="${escapeAttribute(aiNotesText)}">${escapeHtml(aiNotesDisplay)}</td>
+          <td>${escapeHtml(extractionStatus)}</td>
+          <td title="${escapeAttribute(extractionInfoText)}">${escapeHtml(extractionInfoDisplay)}</td>
           <td>${reviewColumn}</td>
           <td>${reviewActionColumn}</td>
           <td>${attachment}</td>
@@ -2155,6 +2182,31 @@ function formatAiCategoryLabel(value) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatExtractionStatusLabel(value) {
+  const status = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  if (!status) {
+    return "-";
+  }
+  if (status === "SUCCESS") {
+    return "Success";
+  }
+  if (status === "FAILED") {
+    return "Failed";
+  }
+  if (status === "SKIPPED_POLICY_NA") {
+    return "Policy NA";
+  }
+  if (status === "SKIPPED_EMPTY") {
+    return "No data";
+  }
+  if (status === "SKIPPED_DISABLED") {
+    return "Disabled";
+  }
+  return status;
 }
 
 function getDedupAnnouncementKey(item) {
