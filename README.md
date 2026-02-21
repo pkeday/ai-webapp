@@ -17,6 +17,12 @@ This project includes:
 - Core API: `https://pkeday-ai-webapp-api.onrender.com`
 - Brokerage API (Sub-app 1): `https://pkeday-ai-webapp-brokerage-api.onrender.com`
 
+## Multi-agent workflow
+
+- Lane rules: `/Users/parikshitkabra/Projects/codex_projects/ai-webapp/AGENTS.md`
+- Runbook: `/Users/parikshitkabra/Projects/codex_projects/ai-webapp/docs/multi-agent-runbook.md`
+- PR checklist template: `/Users/parikshitkabra/Projects/codex_projects/ai-webapp/.github/PULL_REQUEST_TEMPLATE.md`
+
 ## 1) Run locally
 
 Frontend:
