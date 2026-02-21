@@ -220,8 +220,10 @@ const state = {
     limit: 50,
     page: 1,
     totalPages: 1,
-    exchange: "NSE",
+    exchange: "DEDUP",
     symbol: "",
+    dateFrom: "",
+    dateTo: "",
     aiLabelFilter: "all",
     source: "",
     loading: false,
@@ -311,6 +313,8 @@ const refs = {
   archivePageLabel: document.getElementById("archive-page-label"),
   notificationsExchangeSelect: document.getElementById("notifications-exchange-select"),
   notificationsSymbolInput: document.getElementById("notifications-symbol-input"),
+  notificationsDateFrom: document.getElementById("notifications-date-from"),
+  notificationsDateTo: document.getElementById("notifications-date-to"),
   notificationsAiLabelFilter: document.getElementById("notifications-ai-label-filter"),
   notificationsLimitSelect: document.getElementById("notifications-limit-select"),
   notificationsRefreshBtn: document.getElementById("notifications-refresh-btn"),
@@ -328,6 +332,8 @@ const refs = {
   notificationsPrevBtn: document.getElementById("notifications-prev-btn"),
   notificationsNextBtn: document.getElementById("notifications-next-btn"),
   notificationsPageLabel: document.getElementById("notifications-page-label"),
+  notificationsPageInput: document.getElementById("notifications-page-input"),
+  notificationsPageGoBtn: document.getElementById("notifications-page-go-btn"),
   companySelect: document.getElementById("company-select"),
   companySort: document.getElementById("company-sort"),
   companyTimeline: document.getElementById("company-timeline"),
@@ -585,16 +591,15 @@ function bindEvents() {
     await fetchNotifications();
   });
 
-  refs.notificationsExchangeSelect.addEventListener("change", async () => {
-    state.notifications.page = 1;
-    if (String(refs.notificationsExchangeSelect?.value ?? "").trim().toUpperCase() !== "DEDUP") {
-      state.notifications.aiLabelFilter = "all";
-      if (refs.notificationsAiLabelFilter) {
-        refs.notificationsAiLabelFilter.value = "all";
+  if (refs.notificationsExchangeSelect) {
+    refs.notificationsExchangeSelect.addEventListener("change", async () => {
+      if (refs.notificationsExchangeSelect) {
+        refs.notificationsExchangeSelect.value = "DEDUP";
       }
-    }
-    await fetchNotifications();
-  });
+      state.notifications.page = 1;
+      await fetchNotifications();
+    });
+  }
 
   refs.notificationsLimitSelect.addEventListener("change", async () => {
     state.notifications.page = 1;
@@ -612,6 +617,20 @@ function bindEvents() {
   refs.notificationsSymbolInput.addEventListener("input", () => {
     scheduleNotificationsSearch();
   });
+
+  if (refs.notificationsDateFrom) {
+    refs.notificationsDateFrom.addEventListener("change", async () => {
+      state.notifications.page = 1;
+      await fetchNotifications();
+    });
+  }
+
+  if (refs.notificationsDateTo) {
+    refs.notificationsDateTo.addEventListener("change", async () => {
+      state.notifications.page = 1;
+      await fetchNotifications();
+    });
+  }
 
   refs.notificationsSymbolInput.addEventListener("keydown", async (event) => {
     if (event.key !== "Enter") {
@@ -640,6 +659,31 @@ function bindEvents() {
     state.notifications.page += 1;
     await fetchNotifications();
   });
+
+  if (refs.notificationsPageGoBtn) {
+    refs.notificationsPageGoBtn.addEventListener("click", async () => {
+      const requestedPage = Number.parseInt(refs.notificationsPageInput?.value ?? "", 10);
+      if (!Number.isFinite(requestedPage) || requestedPage <= 0) {
+        return;
+      }
+
+      state.notifications.page = Math.min(Math.max(1, Math.floor(requestedPage)), Math.max(1, state.notifications.totalPages));
+      await fetchNotifications();
+    });
+  }
+
+  if (refs.notificationsPageInput) {
+    refs.notificationsPageInput.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+
+      event.preventDefault();
+      if (refs.notificationsPageGoBtn) {
+        refs.notificationsPageGoBtn.click();
+      }
+    });
+  }
 
   if (refs.notificationsTable) {
     refs.notificationsTable.addEventListener("click", async (event) => {
@@ -1194,13 +1238,19 @@ function renderNotifications() {
   }
 
   if (refs.notificationsExchangeSelect) {
-    const normalizedExchange = state.notifications.exchange === "BSE+NSE" ? "NSE+BSE" : state.notifications.exchange;
-    refs.notificationsExchangeSelect.value = normalizedExchange;
+    refs.notificationsExchangeSelect.value = "DEDUP";
   }
   if (refs.notificationsLimitSelect) {
     refs.notificationsLimitSelect.value = String(state.notifications.limit || 50);
   }
+  if (refs.notificationsDateFrom) {
+    refs.notificationsDateFrom.value = normalizeDateFilterValue(state.notifications.dateFrom);
+  }
+  if (refs.notificationsDateTo) {
+    refs.notificationsDateTo.value = normalizeDateFilterValue(state.notifications.dateTo);
+  }
 
+  state.notifications.exchange = "DEDUP";
   const isDedupView = String(state.notifications.exchange ?? "").toUpperCase() === "DEDUP";
   if (!isDedupView) {
     state.notifications.aiLabelFilter = "all";
@@ -1253,6 +1303,11 @@ function renderNotifications() {
         : formatAiCategoryLabel(normalizedAiLabelFilter);
     details.push(`ai filter: ${filterLabel}`);
   }
+  if (state.notifications.dateFrom || state.notifications.dateTo) {
+    const fromLabel = state.notifications.dateFrom || "start";
+    const toLabel = state.notifications.dateTo || "latest";
+    details.push(`date filter: ${fromLabel} to ${toLabel}`);
+  }
 
   if (state.notifications.source) {
     details.push(`source: ${state.notifications.source}`);
@@ -1290,6 +1345,14 @@ function renderNotifications() {
   refs.notificationsMeta.textContent = details.join(" | ");
   if (refs.notificationsPageLabel) {
     refs.notificationsPageLabel.textContent = `Page ${state.notifications.page} of ${state.notifications.totalPages}`;
+  }
+  if (refs.notificationsPageInput) {
+    refs.notificationsPageInput.value = String(state.notifications.page);
+    refs.notificationsPageInput.max = String(Math.max(1, state.notifications.totalPages));
+    refs.notificationsPageInput.disabled = state.notifications.loading || state.notifications.total === 0;
+  }
+  if (refs.notificationsPageGoBtn) {
+    refs.notificationsPageGoBtn.disabled = state.notifications.loading || state.notifications.total === 0;
   }
   if (refs.notificationsPrevBtn) {
     refs.notificationsPrevBtn.disabled = state.notifications.loading || state.notifications.page <= 1;
@@ -2009,6 +2072,14 @@ function normalizeAiLabelFilterValue(value) {
   return normalized;
 }
 
+function normalizeDateFilterValue(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : "";
+}
+
 function matchesNotificationAiLabelFilter(item, aiLabelFilter) {
   const filter = normalizeAiLabelFilterValue(aiLabelFilter);
   if (filter === "all") {
@@ -2383,23 +2454,17 @@ async function saveNotificationReview(dedupAnnouncementKey, reviewedLabel) {
 }
 
 async function fetchNotifications() {
-  const exchangeInput = String(refs.notificationsExchangeSelect?.value ?? "NSE").trim().toUpperCase();
-  const exchange =
-    exchangeInput === "BSE"
-      ? "BSE"
-      : exchangeInput === "DEDUP"
-        ? "DEDUP"
-        : exchangeInput === "NSE+BSE" || exchangeInput === "BSE+NSE" || exchangeInput === "COMBINED"
-          ? "NSE+BSE"
-          : "NSE";
-  if (exchange === "DEDUP" && state.notifications.aiCategories.length === 0) {
+  const exchange = "DEDUP";
+  if (refs.notificationsExchangeSelect) {
+    refs.notificationsExchangeSelect.value = exchange;
+  }
+  if (state.notifications.aiCategories.length === 0) {
     await fetchNotificationCategories();
   }
-  const aiLabelFilter =
-    exchange === "DEDUP"
-      ? normalizeAiLabelFilterValue(refs.notificationsAiLabelFilter?.value ?? state.notifications.aiLabelFilter ?? "all")
-      : "all";
+  const aiLabelFilter = normalizeAiLabelFilterValue(refs.notificationsAiLabelFilter?.value ?? state.notifications.aiLabelFilter ?? "all");
   const symbol = (refs.notificationsSymbolInput?.value ?? "").trim().toUpperCase();
+  const dateFrom = normalizeDateFilterValue(refs.notificationsDateFrom?.value ?? state.notifications.dateFrom ?? "");
+  const dateTo = normalizeDateFilterValue(refs.notificationsDateTo?.value ?? state.notifications.dateTo ?? "");
   const limitInput = Number.parseInt(refs.notificationsLimitSelect?.value ?? "50", 10);
   const limit = Number.isFinite(limitInput) ? Math.max(1, Math.min(500, limitInput)) : 50;
   const page = Math.max(1, Number.isFinite(state.notifications.page) ? Math.floor(state.notifications.page) : 1);
@@ -2415,10 +2480,18 @@ async function fetchNotifications() {
 
   state.notifications.exchange = exchange;
   state.notifications.symbol = symbol;
+  state.notifications.dateFrom = dateFrom;
+  state.notifications.dateTo = dateTo;
   state.notifications.aiLabelFilter = aiLabelFilter;
   state.notifications.limit = limit;
   state.notifications.loading = true;
   state.notifications.error = "";
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    state.notifications.loading = false;
+    state.notifications.error = "Date filter is invalid: 'Date from' must be on or before 'Date to'.";
+    renderNotifications();
+    return;
+  }
   renderNotifications();
 
   const params = new URLSearchParams({
@@ -2430,8 +2503,14 @@ async function fetchNotifications() {
   if (symbol) {
     params.set("symbol", symbol);
   }
-  if (exchange === "DEDUP" && aiLabelFilter !== "all") {
+  if (aiLabelFilter !== "all") {
     params.set("aiLabel", aiLabelFilter);
+  }
+  if (dateFrom) {
+    params.set("dateFrom", dateFrom);
+  }
+  if (dateTo) {
+    params.set("dateTo", dateTo);
   }
 
   const notificationsEndpoint = `/api/notifications/announcements?${params.toString()}`;

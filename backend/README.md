@@ -11,6 +11,8 @@ npm run job:source  # source ingest only (NSE+BSE)
 npm run job:derived # combined + dedup refresh only
 npm run job:ai      # AI classification only
 npm run worker    # legacy async worker (kept idle by hardcoded setting)
+npm run ops:pull-notifications  # manual source pull (date/filter) -> optional DB apply
+npm run ops:reclassify          # targeted forced AI reclassification by URL/key/filter
 npm run check     # syntax checks
 ```
 
@@ -60,6 +62,7 @@ Production setup in this project (default):
 - `COMBINED_MAX_STORED`: Max combined announcements retained (default: `10000`).
 - `DEDUP_STORAGE_FILE`: Path to deduped NSE+BSE store (default: `data/dedup_announcements.json`).
 - `DEDUP_MAX_STORED`: Max deduped announcements retained (default: `10000`).
+- `DEDUP_INCREMENTAL_DAY_LOOKBACK_DAYS`: Incremental dedup day-window lookback (default: `0`, same-day only).
 - `PDF_HASH_TIMEOUT_MS`: Timeout used when downloading PDFs for hashing (default: `20000`).
 - `PDF_HASH_CONCURRENCY`: Parallel PDF hash workers during dedup rebuild (default: `2`).
 - `AI_CLASSIFIER_ENABLED`: Gate for AI classification (`true` to enable; default: `false`).
@@ -131,3 +134,34 @@ Legacy endpoints (disabled by default; require code change):
 - Reviewed labels are stored separately and returned in Dedup API rows as `review_label`; reviewed mismatches are used to inject learned prompt guidance automatically in later AI runs.
 - Default cron window is `09:00` to `21:00` in `Asia/Kolkata`; runs outside window are skipped unless `CRON_FORCE_RUN=true` or API payload includes `"force": true`.
 - Notifications data is served via `GET /api/notifications/announcements`.
+
+## Manual operator scripts
+
+Both scripts are **dry-run by default**. Add `--apply` to write to Postgres snapshots.
+
+1. Pull NSE/BSE notifications for a date window and optional source-text filters:
+
+```bash
+npm run ops:pull-notifications -- \
+  --from 2026-02-18 --to 2026-02-20 \
+  --exchange BOTH \
+  --classification "earning call" \
+  --symbol ABB \
+  --apply
+```
+
+- This fetches from exchange APIs, filters rows, upserts into `store:NSE` / `store:BSE`, then rebuilds combined+dedup snapshots.
+- Use `--skip-derived` if you only want source snapshot upserts.
+
+2. Re-run AI for specific dedup records (forced even when already classified):
+
+```bash
+npm run ops:reclassify -- \
+  --url "https://www.bseindia.com/xml-data/corpfiling/AttachLive/..." \
+  --ai-label earning_call_registration \
+  --limit 20 \
+  --apply
+```
+
+- You can target by `--url`, `--dedup-key`, `--symbol`, `--isin`, and/or current `--ai-label`.
+- The script sends selected keys through a forced reclassification path and persists updated AI labels to Postgres.

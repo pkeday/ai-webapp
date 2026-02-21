@@ -182,21 +182,26 @@
 
             <section id="view-notifications" class="view">
           <article class="panel">
-            <header>Exchange Announcements</header>
+            <header>Dedup Announcements</header>
             <div class="panel-body">
               <div class="notifications-toolbar">
                 <label>
-                  Exchange
-                  <select id="notifications-exchange-select">
-                    <option value="NSE" selected>NSE</option>
-                    <option value="BSE">BSE</option>
-                    <option value="NSE+BSE">NSE+BSE (No DeDup)</option>
-                    <option value="DEDUP">Dedup</option>
+                  View
+                  <select id="notifications-exchange-select" disabled>
+                    <option value="DEDUP" selected>Dedup</option>
                   </select>
                 </label>
                 <label>
                   Symbol filter
                   <input id="notifications-symbol-input" type="text" placeholder="Example: TCS" />
+                </label>
+                <label>
+                  Date from
+                  <input id="notifications-date-from" type="date" />
+                </label>
+                <label>
+                  Date to
+                  <input id="notifications-date-to" type="date" />
                 </label>
                 <label>
                   AI label filter
@@ -240,6 +245,11 @@
                 <button id="notifications-prev-btn" class="btn" type="button">Previous</button>
                 <span id="notifications-page-label" class="page-label">Page 1 of 1</span>
                 <button id="notifications-next-btn" class="btn" type="button">Next</button>
+                <label class="pager-jump">
+                  Page
+                  <input id="notifications-page-input" type="number" min="1" step="1" inputmode="numeric" />
+                </label>
+                <button id="notifications-page-go-btn" class="btn" type="button">Go</button>
               </div>
             </div>
           </article>

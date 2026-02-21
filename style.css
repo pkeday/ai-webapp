@@ -784,7 +784,14 @@ input[type="checkbox"] {
 
 .notifications-toolbar {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.2fr) minmax(180px, 1.1fr) minmax(120px, 0.7fr) auto;
+  grid-template-columns:
+    minmax(130px, 0.8fr)
+    minmax(170px, 1fr)
+    minmax(145px, 0.9fr)
+    minmax(145px, 0.9fr)
+    minmax(180px, 1.1fr)
+    minmax(120px, 0.7fr)
+    auto;
   gap: 8px;
   margin-bottom: 10px;
   align-items: end;
@@ -934,6 +941,19 @@ input[type="checkbox"] {
 
 .table-pager .btn {
   padding: 6px 11px;
+}
+
+.pager-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #5a7295;
+}
+
+.pager-jump input {
+  width: 88px;
+  margin: 0;
 }
 
 .page-label {

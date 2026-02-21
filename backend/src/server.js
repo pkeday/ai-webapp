@@ -41,6 +41,7 @@ const combinedMaxStored = Number.parseInt(process.env.COMBINED_MAX_STORED ?? "10
 const dedupStoragePath = resolve(process.cwd(), process.env.DEDUP_STORAGE_FILE ?? "data/dedup_announcements.json");
 const dedupMaxStored = Number.parseInt(process.env.DEDUP_MAX_STORED ?? "10000", 10);
 const dedupIncrementalLookbackHours = Number.parseInt(process.env.DEDUP_INCREMENTAL_LOOKBACK_HOURS ?? "48", 10);
+const dedupIncrementalDayLookbackDays = Number.parseInt(process.env.DEDUP_INCREMENTAL_DAY_LOOKBACK_DAYS ?? "0", 10);
 const dedupIncrementalMinCandidates = Number.parseInt(process.env.DEDUP_INCREMENTAL_MIN_CANDIDATES ?? "400", 10);
 const dedupIncrementalMaxCandidates = Number.parseInt(process.env.DEDUP_INCREMENTAL_MAX_CANDIDATES ?? "2500", 10);
 const pdfHashTimeoutMs = Number.parseInt(process.env.PDF_HASH_TIMEOUT_MS ?? "20000", 10);
@@ -1274,6 +1275,37 @@ function extractDateKeyFromRaw(value) {
   return null;
 }
 
+function parseDateKeyToUtcMillis(dateKey) {
+  const normalized = normalizeText(dateKey);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return null;
+  }
+
+  const parsed = Date.parse(`${normalized}T00:00:00Z`);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return new Date(parsed).toISOString().slice(0, 10) === normalized ? parsed : null;
+}
+
+function buildDateKeyWindow(anchorDateKey, lookbackDays = 0) {
+  const anchorMs = parseDateKeyToUtcMillis(anchorDateKey);
+  if (anchorMs === null) {
+    return null;
+  }
+
+  const safeLookbackDays = Math.max(0, normalizeNonNegativeInt(lookbackDays, 0));
+  const dayMs = 24 * 60 * 60 * 1000;
+  const keys = new Set();
+
+  for (let offset = 0; offset <= safeLookbackDays; offset += 1) {
+    keys.add(new Date(anchorMs - offset * dayMs).toISOString().slice(0, 10));
+  }
+
+  return keys;
+}
+
 function getExchangeValue(value) {
   const normalized = normalizeText(value).toUpperCase();
   return normalized || "NSE";
@@ -1453,11 +1485,55 @@ function buildDedupSourceFingerprint() {
   return buildStoreFingerprint("COMBINED");
 }
 
+function getDedupRecordDateKey(item) {
+  return extractDateKeyFromRaw(item?.timestamp ?? item?.insertedAt);
+}
+
+function selectDedupBaselineAnnouncements(anchorDateKey, lookbackDays = 0) {
+  const baseline = Array.isArray(stores.DEDUP.announcements) ? stores.DEDUP.announcements : [];
+  const allowedDateKeys = buildDateKeyWindow(anchorDateKey, lookbackDays);
+  if (!allowedDateKeys || baseline.length === 0) {
+    return [];
+  }
+
+  return baseline.filter((item) => {
+    const itemDateKey = getDedupRecordDateKey(item);
+    return itemDateKey ? allowedDateKeys.has(itemDateKey) : false;
+  });
+}
+
 function selectDedupSourceCandidates() {
   const source = Array.isArray(stores.COMBINED.announcements) ? stores.COMBINED.announcements : [];
   const safeMinCandidates = normalizePositiveInt(dedupIncrementalMinCandidates, 400);
   const safeMaxCandidates = Math.max(safeMinCandidates, normalizePositiveInt(dedupIncrementalMaxCandidates, 2500));
   const safeLookbackHours = normalizePositiveInt(dedupIncrementalLookbackHours, 48);
+  const safeDayLookbackDays = Math.max(0, normalizeNonNegativeInt(dedupIncrementalDayLookbackDays, 0));
+  const anchorDateKey = source.map((item) => getDedupRecordDateKey(item)).find(Boolean) ?? null;
+  const allowedDateKeys = buildDateKeyWindow(anchorDateKey, safeDayLookbackDays);
+  const dateWindowCandidates = [];
+
+  if (allowedDateKeys) {
+    for (const item of source) {
+      const itemDateKey = getDedupRecordDateKey(item);
+      if (!itemDateKey || !allowedDateKeys.has(itemDateKey)) {
+        continue;
+      }
+      dateWindowCandidates.push(item);
+      if (dateWindowCandidates.length >= safeMaxCandidates) {
+        break;
+      }
+    }
+  }
+
+  if (dateWindowCandidates.length > 0) {
+    return {
+      candidates: dateWindowCandidates,
+      anchorDateKey,
+      dayLookbackDays: safeDayLookbackDays,
+      selectionMode: "date-window"
+    };
+  }
+
   const cutoffMs = Date.now() - safeLookbackHours * 60 * 60 * 1000;
   const candidates = [];
 
@@ -1480,10 +1556,20 @@ function selectDedupSourceCandidates() {
   }
 
   if (candidates.length === 0) {
-    return source.slice(0, safeMaxCandidates);
+    return {
+      candidates: source.slice(0, safeMaxCandidates),
+      anchorDateKey,
+      dayLookbackDays: safeDayLookbackDays,
+      selectionMode: "fallback-head"
+    };
   }
 
-  return candidates;
+  return {
+    candidates,
+    anchorDateKey,
+    dayLookbackDays: safeDayLookbackDays,
+    selectionMode: "fallback-hour-lookback"
+  };
 }
 
 function buildNseListingByIsin() {
@@ -2172,15 +2258,53 @@ async function loadAiReviewStore() {
 
 async function persistAiReviewStore() {
   aiReviewStore.lastSyncAt = new Date().toISOString();
-  const payload = {
+  const basePayload = {
     updatedAt: aiReviewStore.lastSyncAt,
     total: aiReviewStore.records.length,
     records: aiReviewStore.records
   };
+  let payload = basePayload;
   let persistedToDatabase = false;
 
   if (isDatabaseEnabled()) {
     try {
+      const existingPayload = await readSnapshotFromDatabase(databaseAiReviewSnapshotKey);
+      const existingRecords = Array.isArray(existingPayload?.records) ? existingPayload.records : [];
+      const mergedByKey = new Map();
+      const mergeRecord = (record) => {
+        const key = normalizeAnnouncementKey(record?.dedupAnnouncementKey);
+        if (!key) {
+          return;
+        }
+        const normalizedRecord = {
+          ...record,
+          dedupAnnouncementKey: key
+        };
+        const current = mergedByKey.get(key);
+        const currentReviewedAtMs = parseTimestampToMillis(current?.reviewedAt) ?? 0;
+        const incomingReviewedAtMs = parseTimestampToMillis(normalizedRecord?.reviewedAt) ?? 0;
+        if (!current || incomingReviewedAtMs >= currentReviewedAtMs) {
+          mergedByKey.set(key, normalizedRecord);
+        }
+      };
+
+      for (const record of existingRecords) {
+        mergeRecord(record);
+      }
+      for (const record of aiReviewStore.records) {
+        mergeRecord(record);
+      }
+
+      const mergedRecords = Array.from(mergedByKey.values());
+      mergedRecords.sort((left, right) => (parseTimestampToMillis(right?.reviewedAt) ?? 0) - (parseTimestampToMillis(left?.reviewedAt) ?? 0));
+      payload = {
+        ...basePayload,
+        total: mergedRecords.length,
+        records: mergedRecords
+      };
+      aiReviewStore.records = mergedRecords;
+      indexAiReviewStore();
+
       await writeSnapshotToDatabase(databaseAiReviewSnapshotKey, payload);
       persistedToDatabase = true;
     } catch (error) {
@@ -2322,14 +2446,49 @@ async function loadAiSuggestionStore() {
 
 async function persistAiSuggestionStore() {
   aiSuggestionStore.lastSyncAt = new Date().toISOString();
-  const payload = {
+  const basePayload = {
     updatedAt: aiSuggestionStore.lastSyncAt,
     total: aiSuggestionStore.records.length,
     records: aiSuggestionStore.records
   };
+  let payload = basePayload;
 
   if (isDatabaseEnabled()) {
     try {
+      const existingPayload = await readSnapshotFromDatabase(databaseAiSuggestionSnapshotKey);
+      const existingRecords = Array.isArray(existingPayload?.records) ? existingPayload.records : [];
+      const mergedById = new Map();
+      const mergeRecord = (record) => {
+        const normalized = normalizeAiSuggestionRecord(record);
+        if (!normalized) {
+          return;
+        }
+
+        const current = mergedById.get(normalized.id);
+        const currentCreatedAtMs = parseTimestampToMillis(current?.createdAt) ?? 0;
+        const incomingCreatedAtMs = parseTimestampToMillis(normalized?.createdAt) ?? 0;
+        if (!current || incomingCreatedAtMs >= currentCreatedAtMs) {
+          mergedById.set(normalized.id, normalized);
+        }
+      };
+
+      for (const record of existingRecords) {
+        mergeRecord(record);
+      }
+      for (const record of aiSuggestionStore.records) {
+        mergeRecord(record);
+      }
+
+      const mergedRecords = Array.from(mergedById.values());
+      mergedRecords.sort((left, right) => (parseTimestampToMillis(right?.createdAt) ?? 0) - (parseTimestampToMillis(left?.createdAt) ?? 0));
+      payload = {
+        ...basePayload,
+        total: mergedRecords.length,
+        records: mergedRecords
+      };
+      aiSuggestionStore.records = mergedRecords;
+      indexAiSuggestionStore();
+
       await writeSnapshotToDatabase(databaseAiSuggestionSnapshotKey, payload);
     } catch (error) {
       const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
@@ -3299,6 +3458,11 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
   const forceEnabled = options?.forceEnabled === true;
   const retryFailed = options?.retryFailed === true;
   const includePendingBacklog = options?.includePendingBacklog !== false;
+  const forceReclassifySet = new Set(
+    (Array.isArray(options?.forceReclassifyKeys) ? options.forceReclassifyKeys : [])
+      .map((value) => normalizeAnnouncementKey(value))
+      .filter(Boolean)
+  );
   const maxItemsOverrideRaw = Number.parseInt(String(options?.maxItems ?? ""), 10);
   const maxItemsOverride = Number.isFinite(maxItemsOverrideRaw) && maxItemsOverrideRaw > 0 ? maxItemsOverrideRaw : null;
   const scanRecentWhenNoTouched = options?.scanRecentWhenNoTouched === true;
@@ -3365,6 +3529,7 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
   const queue = [];
   const consideredKeys = new Set();
   let skippedExistingCount = 0;
+  let forceReclassifyCandidateCount = 0;
   let backlogCandidateCount = 0;
   const primaryQueueCap =
     includePendingBacklog && candidates.length > 0
@@ -3387,56 +3552,62 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
       return;
     }
     consideredKeys.add(dedupAnnouncementKey);
+    const forceReclassify = forceReclassifySet.has(dedupAnnouncementKey);
+    if (forceReclassify) {
+      forceReclassifyCandidateCount += 1;
+    }
 
     const inputHash = buildAiInputHash(item, aiCriteriaVersion);
     const existingRecord = getAiLabelRecordForKey(dedupAnnouncementKey);
-    if (
-      existingRecord &&
-      existingRecord.status === "SUCCESS" &&
-      normalizeText(existingRecord.criteriaVersion) === aiCriteriaVersion &&
-      normalizeText(existingRecord.inputHash) === inputHash
-    ) {
-      skippedExistingCount += 1;
-      return;
-    }
-
-    if (existingRecord && existingRecord.status === "FAILED") {
+    if (!forceReclassify) {
       if (
-        !retryFailed ||
-        normalizeText(existingRecord.criteriaVersion) !== aiCriteriaVersion ||
-        normalizeText(existingRecord.inputHash) !== inputHash
+        existingRecord &&
+        existingRecord.status === "SUCCESS" &&
+        normalizeText(existingRecord.criteriaVersion) === aiCriteriaVersion &&
+        normalizeText(existingRecord.inputHash) === inputHash
       ) {
         skippedExistingCount += 1;
         return;
       }
 
-      const failureType = normalizeAiFailureType(existingRecord?.failureType);
-      const retryable =
-        typeof existingRecord?.retryable === "boolean"
-          ? existingRecord.retryable
-          : isTransientAiFailureType(failureType);
+      if (existingRecord && existingRecord.status === "FAILED") {
+        if (
+          !retryFailed ||
+          normalizeText(existingRecord.criteriaVersion) !== aiCriteriaVersion ||
+          normalizeText(existingRecord.inputHash) !== inputHash
+        ) {
+          skippedExistingCount += 1;
+          return;
+        }
 
-      if (!retryable && !forceEnabled) {
+        const failureType = normalizeAiFailureType(existingRecord?.failureType);
+        const retryable =
+          typeof existingRecord?.retryable === "boolean"
+            ? existingRecord.retryable
+            : isTransientAiFailureType(failureType);
+
+        if (!retryable && !forceEnabled) {
+          skippedExistingCount += 1;
+          return;
+        }
+
+        const failedAtMs = parseTimestampToMillis(existingRecord.updatedAt);
+        if (!forceEnabled && failedAtMs && Date.now() - failedAtMs < transientFailureRetryWindowMs) {
+          skippedExistingCount += 1;
+          return;
+        }
+      }
+
+      const hashRecord = aiLabelStore.byInputHash.get(inputHash);
+      if (hashRecord && hashRecord.status === "SUCCESS") {
+        upsertAiLabelRecord({
+          ...hashRecord,
+          dedupAnnouncementKey,
+          inputHash
+        });
         skippedExistingCount += 1;
         return;
       }
-
-      const failedAtMs = parseTimestampToMillis(existingRecord.updatedAt);
-      if (!forceEnabled && failedAtMs && Date.now() - failedAtMs < transientFailureRetryWindowMs) {
-        skippedExistingCount += 1;
-        return;
-      }
-    }
-
-    const hashRecord = aiLabelStore.byInputHash.get(inputHash);
-    if (hashRecord && hashRecord.status === "SUCCESS") {
-      upsertAiLabelRecord({
-        ...hashRecord,
-        dedupAnnouncementKey,
-        inputHash
-      });
-      skippedExistingCount += 1;
-      return;
     }
 
     queue.push(item);
@@ -3478,6 +3649,8 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
       candidateCount: consideredKeys.size,
       primaryCandidateCount: candidates.length,
       backlogCandidateCount,
+      forceReclassifyRequestedCount: forceReclassifySet.size,
+      forceReclassifyCandidateCount,
       skippedExistingCount,
       processedCount: 0,
       successCount: 0,
@@ -3618,6 +3791,8 @@ async function runAiClassificationCron(trigger, touchedDedupKeys = [], options =
     candidateCount: consideredKeys.size,
     primaryCandidateCount: candidates.length,
     backlogCandidateCount,
+    forceReclassifyRequestedCount: forceReclassifySet.size,
+    forceReclassifyCandidateCount,
     queuedCount: queue.length,
     skippedExistingCount,
     concurrency: normalizePositiveInt(aiConcurrency, 2),
@@ -4300,16 +4475,28 @@ async function refreshDedupAnnouncements(trigger = "manual", force = false) {
     }
 
     const incrementalMode = !force && Array.isArray(store.announcements) && store.announcements.length > 0;
-    const sourceCandidates = incrementalMode ? selectDedupSourceCandidates() : [...stores.COMBINED.announcements];
+    const sourceSelection = incrementalMode
+      ? selectDedupSourceCandidates()
+      : {
+          candidates: [...stores.COMBINED.announcements],
+          anchorDateKey: getDedupRecordDateKey(stores.COMBINED.announcements[0]),
+          dayLookbackDays: Math.max(0, normalizeNonNegativeInt(dedupIncrementalDayLookbackDays, 0)),
+          selectionMode: "full"
+        };
+    const sourceCandidates = Array.isArray(sourceSelection?.candidates) ? sourceSelection.candidates : [];
+    const baselineCandidates = incrementalMode
+      ? selectDedupBaselineAnnouncements(sourceSelection.anchorDateKey, sourceSelection.dayLookbackDays)
+      : [];
     const result = await buildDedupAnnouncements({
       sourceItems: sourceCandidates,
-      baseAnnouncements: incrementalMode ? store.announcements : []
+      baseAnnouncements: baselineCandidates
     });
-    store.announcements = result.announcements;
+    store.announcements = incrementalMode ? mergeStoreAnnouncements("DEDUP", store.announcements, result.announcements) : result.announcements;
     store.keys = new Set(store.announcements.map((item) => getAnnouncementKey("DEDUP", item)).filter(Boolean));
 
     const trimmedCount = trimStore("DEDUP");
     const safeLookbackHours = normalizePositiveInt(dedupIncrementalLookbackHours, 48);
+    const safeDayLookbackDays = Math.max(0, normalizeNonNegativeInt(dedupIncrementalDayLookbackDays, 0));
     const safeMinCandidates = normalizePositiveInt(dedupIncrementalMinCandidates, 400);
     const safeMaxCandidates = Math.max(safeMinCandidates, normalizePositiveInt(dedupIncrementalMaxCandidates, 2500));
     store.lastSyncAt = new Date().toISOString();
@@ -4319,9 +4506,13 @@ async function refreshDedupAnnouncements(trigger = "manual", force = false) {
       dedupeRule: "ISIN + PDF hash",
       mode: incrementalMode ? "incremental" : "full",
       incrementalLookbackHours: safeLookbackHours,
+      incrementalDayLookbackDays: safeDayLookbackDays,
+      incrementalAnchorDate: sourceSelection.anchorDateKey ?? null,
+      incrementalSelectionMode: normalizeText(sourceSelection.selectionMode) || (incrementalMode ? "incremental" : "full"),
       incrementalMinCandidates: safeMinCandidates,
       incrementalMaxCandidates: safeMaxCandidates,
       candidateSourceCount: sourceCandidates.length,
+      baselineCandidateCount: baselineCandidates.length,
       inputCount: result.stats.inputCount,
       baselineCount: result.stats.baselineCount,
       touchedCount: result.stats.touchedCount,
@@ -4390,6 +4581,99 @@ function buildStoreSnapshotPayload(exchange, store) {
     announcements: store.announcements,
     ...legacySyncFields
   };
+}
+
+function getStoreAnnouncementSortMillis(exchange, item) {
+  if (exchange === "COMBINED" || exchange === "DEDUP") {
+    const storedSortMs = Number(item?.sortTimestampMs ?? 0);
+    const timestampMs = parseTimestampToMillis(item?.timestamp) ?? 0;
+    const insertedAtMs = parseTimestampToMillis(item?.insertedAt) ?? 0;
+    return Math.max(0, storedSortMs, timestampMs, insertedAtMs);
+  }
+
+  const timestampMs = parseTimestampToMillis(getAnnouncementTimestampRaw(item, exchange)) ?? 0;
+  const insertedAtMs = parseTimestampToMillis(item?.insertedAt) ?? 0;
+  return Math.max(0, timestampMs, insertedAtMs);
+}
+
+function sortStoreAnnouncementsByRecency(exchange, announcements) {
+  announcements.sort((left, right) => {
+    const sortDiff = getStoreAnnouncementSortMillis(exchange, right) - getStoreAnnouncementSortMillis(exchange, left);
+    if (sortDiff !== 0) {
+      return sortDiff;
+    }
+
+    return String(right?.insertedAt ?? "").localeCompare(String(left?.insertedAt ?? ""));
+  });
+}
+
+function mergeStoreAnnouncements(exchange, existingAnnouncements, incomingAnnouncements) {
+  const mergedByKey = new Map();
+  const merged = [];
+  const upsert = (item, preferIncoming = false) => {
+    const key = getAnnouncementKey(exchange, item);
+    if (!key) {
+      return;
+    }
+
+    const normalized = {
+      ...item,
+      announcementKey: key
+    };
+    const existing = mergedByKey.get(key);
+    if (existing === undefined) {
+      mergedByKey.set(key, merged.length);
+      merged.push(normalized);
+      return;
+    }
+
+    if (preferIncoming) {
+      merged[existing] = normalized;
+    }
+  };
+
+  for (const item of Array.isArray(existingAnnouncements) ? existingAnnouncements : []) {
+    upsert(item, false);
+  }
+  for (const item of Array.isArray(incomingAnnouncements) ? incomingAnnouncements : []) {
+    upsert(item, true);
+  }
+
+  sortStoreAnnouncementsByRecency(exchange, merged);
+  const maxStored = normalizePositiveInt(stores[exchange]?.maxStored, 5000);
+  return merged.slice(0, maxStored);
+}
+
+function mergeStoreSnapshotPayload(exchange, existingPayload, incomingPayload) {
+  const existing = existingPayload && typeof existingPayload === "object" ? existingPayload : {};
+  const incoming = incomingPayload && typeof incomingPayload === "object" ? incomingPayload : {};
+  const mergedAnnouncements = mergeStoreAnnouncements(exchange, existing?.announcements, incoming?.announcements);
+
+  return {
+    ...existing,
+    ...incoming,
+    updatedAt: new Date().toISOString(),
+    exchange,
+    sourceFingerprint: normalizeText(incoming?.sourceFingerprint) || normalizeText(existing?.sourceFingerprint) || null,
+    lastSyncAt:
+      typeof incoming?.lastSyncAt === "string" ? incoming.lastSyncAt : typeof existing?.lastSyncAt === "string" ? existing.lastSyncAt : null,
+    lastSyncStats:
+      incoming?.lastSyncStats && typeof incoming.lastSyncStats === "object"
+        ? incoming.lastSyncStats
+        : existing?.lastSyncStats && typeof existing.lastSyncStats === "object"
+          ? existing.lastSyncStats
+          : null,
+    total: mergedAnnouncements.length,
+    announcements: mergedAnnouncements
+  };
+}
+
+async function writeMergedStoreSnapshotToDatabase(exchange, payload) {
+  const snapshotKey = getStoreSnapshotKey(exchange);
+  const existingPayload = await readSnapshotFromDatabase(snapshotKey);
+  const mergedPayload = mergeStoreSnapshotPayload(exchange, existingPayload, payload);
+  await writeSnapshotToDatabase(snapshotKey, mergedPayload);
+  return mergedPayload;
 }
 
 function applyStoreSnapshot(exchange, store, parsed) {
@@ -4488,7 +4772,8 @@ async function loadStore(exchange) {
 
   if (source === "file" && isDatabaseEnabled()) {
     try {
-      await writeSnapshotToDatabase(getStoreSnapshotKey(exchange), buildStoreSnapshotPayload(exchange, store));
+      const mergedPayload = await writeMergedStoreSnapshotToDatabase(exchange, buildStoreSnapshotPayload(exchange, store));
+      applyStoreSnapshot(exchange, store, mergedPayload);
       source = "file->postgres";
     } catch (error) {
       const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
@@ -4508,10 +4793,13 @@ async function loadStore(exchange) {
 async function persistStore(exchange) {
   const store = stores[exchange];
   const payload = buildStoreSnapshotPayload(exchange, store);
+  let persistedPayload = payload;
 
   if (isDatabaseEnabled()) {
     try {
-      await writeSnapshotToDatabase(getStoreSnapshotKey(exchange), payload);
+      persistedPayload = await writeMergedStoreSnapshotToDatabase(exchange, payload);
+      applyStoreSnapshot(exchange, store, persistedPayload);
+      store.loaded = true;
     } catch (error) {
       const message = sanitizeSensitiveText(error instanceof Error ? error.message : String(error || "Unknown DB write error"));
       log(`Failed to persist ${exchange} announcement store to Postgres`, { message });
@@ -4519,7 +4807,7 @@ async function persistStore(exchange) {
   }
 
   await mkdir(dirname(store.storagePath), { recursive: true });
-  await writeFile(store.storagePath, JSON.stringify(payload, null, 2), "utf8");
+  await writeFile(store.storagePath, JSON.stringify(persistedPayload, null, 2), "utf8");
 }
 
 function trimStore(exchange) {
@@ -4710,6 +4998,115 @@ async function syncBseAnnouncements(trigger = "manual") {
   } finally {
     store.syncInFlight = null;
   }
+}
+
+export async function upsertSourceAnnouncements(exchange, announcements = [], options = {}) {
+  const normalizedExchange = getExchangeValue(exchange);
+  if (normalizedExchange !== "NSE" && normalizedExchange !== "BSE") {
+    throw new Error("upsertSourceAnnouncements requires exchange NSE or BSE.");
+  }
+
+  const store = stores[normalizedExchange];
+  await loadStore(normalizedExchange);
+
+  const sourceAnnouncements = Array.isArray(announcements) ? announcements.filter((item) => item && typeof item === "object") : [];
+  let normalizedAnnouncements = sourceAnnouncements;
+  let isinMapSize = 0;
+  let withIsinCount = 0;
+
+  if (normalizedExchange === "BSE") {
+    const enrichBseIsin = options?.enrichBseIsin !== false;
+    if (enrichBseIsin) {
+      const effectiveTimeoutMsRaw = Number.parseInt(String(options?.timeoutMs ?? ""), 10);
+      const effectiveTimeoutMs = Number.isFinite(effectiveTimeoutMsRaw) && effectiveTimeoutMsRaw > 0
+        ? effectiveTimeoutMsRaw
+        : normalizePositiveInt(bseTimeoutMs, 30_000);
+
+      try {
+        const isinByScripCode = await fetchBseIsinMap({ timeoutMs: effectiveTimeoutMs });
+        isinMapSize = isinByScripCode.size;
+
+        const enrichedIncoming = enrichBseAnnouncementsWithIsin(sourceAnnouncements, isinByScripCode);
+        normalizedAnnouncements = enrichedIncoming.announcements;
+        withIsinCount = enrichedIncoming.withIsinCount;
+
+        const enrichedStored = enrichBseAnnouncementsWithIsin(store.announcements, isinByScripCode);
+        store.announcements = enrichedStored.announcements;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown BSE ISIN map error";
+        log("Manual BSE upsert: ISIN enrichment skipped", { message });
+
+        const enrichedIncoming = enrichBseAnnouncementsWithIsin(sourceAnnouncements, null);
+        normalizedAnnouncements = enrichedIncoming.announcements;
+        withIsinCount = enrichedIncoming.withIsinCount;
+
+        const enrichedStored = enrichBseAnnouncementsWithIsin(store.announcements, null);
+        store.announcements = enrichedStored.announcements;
+      }
+    } else {
+      const enrichedIncoming = enrichBseAnnouncementsWithIsin(sourceAnnouncements, null);
+      normalizedAnnouncements = enrichedIncoming.announcements;
+      withIsinCount = enrichedIncoming.withIsinCount;
+    }
+  }
+
+  const insertedAt = new Date().toISOString();
+  const newAnnouncements = [];
+  let duplicateCount = 0;
+  let invalidCount = 0;
+
+  for (const announcement of normalizedAnnouncements) {
+    const key =
+      normalizedExchange === "NSE" ? deriveAnnouncementKey(announcement) : deriveBseAnnouncementKey(announcement);
+    if (!key) {
+      invalidCount += 1;
+      continue;
+    }
+
+    if (store.keys.has(key)) {
+      duplicateCount += 1;
+      continue;
+    }
+
+    store.keys.add(key);
+    newAnnouncements.push({
+      ...announcement,
+      exchange: normalizedExchange,
+      announcementKey: key,
+      insertedAt
+    });
+  }
+
+  if (newAnnouncements.length > 0) {
+    store.announcements = [...newAnnouncements, ...store.announcements];
+  }
+
+  const trimmedCount = trimStore(normalizedExchange);
+  store.lastSyncAt = new Date().toISOString();
+  store.lastSyncStats = {
+    exchange: normalizedExchange,
+    trigger: normalizeText(options?.trigger) || "manual-script-upsert",
+    mode: "script-manual-upsert",
+    fromDate: normalizeText(options?.fromDate) || null,
+    toDate: normalizeText(options?.toDate) || null,
+    fetchedCount: normalizedAnnouncements.length,
+    newCount: newAnnouncements.length,
+    duplicateCount,
+    invalidCount,
+    trimmedCount,
+    totalStored: store.announcements.length,
+    syncedAt: store.lastSyncAt,
+    ...(normalizedExchange === "BSE"
+      ? {
+          isinMapSize,
+          withIsinCount,
+          missingIsinCount: Math.max(0, normalizedAnnouncements.length - withIsinCount)
+        }
+      : {})
+  };
+
+  await persistStore(normalizedExchange);
+  return store.lastSyncStats;
 }
 
 async function readJsonBody(req) {
@@ -5040,6 +5437,55 @@ function matchSymbolFilter(item, exchange, symbolFilter) {
   return symbol === query || companyName.includes(query) || isin === query;
 }
 
+function normalizeDateFilterValue(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return null;
+  }
+
+  return parseDateKeyToUtcMillis(normalized) === null ? null : normalized;
+}
+
+function resolveAnnouncementDateKeyForFilter(item, exchange) {
+  const normalizedExchange =
+    exchange === "BSE+NSE" || exchange === "NSE+BSE" || exchange === "COMBINED"
+      ? "COMBINED"
+      : exchange === "DEDUP"
+        ? "DEDUP"
+        : exchange === "BSE"
+          ? "BSE"
+          : "NSE";
+
+  if (normalizedExchange === "COMBINED" || normalizedExchange === "DEDUP") {
+    return extractDateKeyFromRaw(item?.timestamp ?? item?.insertedAt);
+  }
+
+  return getAnnouncementDateKey(item, normalizedExchange);
+}
+
+function matchDateFilter(item, exchange, fromDateKey, toDateKey) {
+  if (!fromDateKey && !toDateKey) {
+    return true;
+  }
+
+  const itemDateKey = resolveAnnouncementDateKeyForFilter(item, exchange);
+  if (!itemDateKey) {
+    return false;
+  }
+
+  if (fromDateKey && itemDateKey < fromDateKey) {
+    return false;
+  }
+  if (toDateKey && itemDateKey > toDateKey) {
+    return false;
+  }
+  return true;
+}
+
 async function handleGetAnnouncements(req, res, requestUrl) {
   await Promise.all([loadStore("NSE"), loadStore("BSE"), loadStore("COMBINED"), loadStore("DEDUP"), loadAiLabelStore(), loadAiReviewStore()]);
 
@@ -5055,6 +5501,26 @@ async function handleGetAnnouncements(req, res, requestUrl) {
   const aiLabelFilter = normalizeAiLabelFilter(
     requestUrl.searchParams.get("aiLabel") ?? requestUrl.searchParams.get("ai_label") ?? ""
   );
+  const dateFrom = normalizeDateFilterValue(
+    requestUrl.searchParams.get("dateFrom") ?? requestUrl.searchParams.get("fromDate") ?? ""
+  );
+  const dateTo = normalizeDateFilterValue(
+    requestUrl.searchParams.get("dateTo") ?? requestUrl.searchParams.get("toDate") ?? ""
+  );
+
+  if (dateFrom === null || dateTo === null) {
+    sendJson(req, res, 400, {
+      error: "Invalid date filter. Use YYYY-MM-DD for dateFrom/dateTo."
+    });
+    return;
+  }
+
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    sendJson(req, res, 400, {
+      error: "dateFrom cannot be after dateTo."
+    });
+    return;
+  }
 
   const selectedExchange =
     exchangeQuery === "BSE"
@@ -5087,7 +5553,7 @@ async function handleGetAnnouncements(req, res, requestUrl) {
         : selectedExchange === "DEDUP"
           ? "DEDUP"
           : getExchangeValue(item?.exchange ?? selectedExchange);
-    return matchSymbolFilter(item, filterExchange, symbolFilter);
+    return matchSymbolFilter(item, filterExchange, symbolFilter) && matchDateFilter(item, filterExchange, dateFrom, dateTo);
   });
 
   const lastSyncAt =
@@ -5119,6 +5585,8 @@ async function handleGetAnnouncements(req, res, requestUrl) {
 
   sendJson(req, res, 200, {
     exchange: selectedExchange,
+    dateFrom: dateFrom || null,
+    dateTo: dateTo || null,
     announcements,
     total: filtered.length,
     limit,
@@ -5197,6 +5665,7 @@ async function runDerivedSyncStage(trigger, hasNewSourceRows) {
 
 async function runAiClassificationStage(trigger, dedupResult, options = {}) {
   const forceEnabled = options?.forceEnabled === true;
+  const forceReclassifyKeys = Array.isArray(options?.forceReclassifyKeys) ? options.forceReclassifyKeys : [];
   const maxItemsRaw = Number.parseInt(String(options?.maxItems ?? ""), 10);
   const maxItems = Number.isFinite(maxItemsRaw) && maxItemsRaw > 0 ? maxItemsRaw : null;
   const scanRecentWhenNoTouched = options?.scanRecentWhenNoTouched === true;
@@ -5234,6 +5703,7 @@ async function runAiClassificationStage(trigger, dedupResult, options = {}) {
   const touchedDedupKeys = Array.isArray(dedupResult.value?.touchedDedupKeys) ? dedupResult.value.touchedDedupKeys : [];
   return runAiClassificationCron(trigger, touchedDedupKeys, {
     forceEnabled,
+    forceReclassifyKeys,
     maxItems,
     scanRecentWhenNoTouched,
     recentCandidatePool
@@ -5310,6 +5780,7 @@ async function prepareStoresForAiClassification(triggerBase = "ai") {
 async function executeAiClassificationChunk(params = {}) {
   const effectiveTrigger = normalizeText(params?.trigger) || "manual-ai-only";
   const forceEnabled = params?.forceEnabled === true;
+  const forceReclassifyKeys = Array.isArray(params?.forceReclassifyKeys) ? params.forceReclassifyKeys : [];
   const maxItemsRaw = Number.parseInt(String(params?.maxItems ?? ""), 10);
   const maxItems = Number.isFinite(maxItemsRaw) && maxItemsRaw > 0 ? maxItemsRaw : null;
   const scanRecentWhenNoTouched = params?.scanRecentWhenNoTouched === true;
@@ -5323,6 +5794,7 @@ async function executeAiClassificationChunk(params = {}) {
   const { combinedPrep, dedupPrep } = await prepareStoresForAiClassification(effectiveTrigger);
   const aiClassificationResult = await runAiClassificationCron(effectiveTrigger, touchedDedupKeys, {
     forceEnabled,
+    forceReclassifyKeys,
     maxItems,
     scanRecentWhenNoTouched,
     recentCandidatePool
@@ -5412,7 +5884,7 @@ function buildOutsideCronWindowPayload(trigger, runCount, runAt, cronWindow) {
 }
 
 async function executeDailyPipelineRun(body = {}) {
-  await warmAnnouncementStores();
+  await warmAnnouncementStores({ forceReloadFromDatabase: isDatabaseEnabled() });
 
   const trigger = String(body?.trigger ?? "unknown");
   const forceRun = body?.force === true || normalizeText(body?.force).toLowerCase() === "true";
@@ -5528,6 +6000,11 @@ export async function runAiClassificationJob(trigger = "manual-ai-sync", dedupRe
   return runAiClassificationStage(trigger, effectiveDedupResult, options);
 }
 
+export async function runAiClassificationChunkJob(params = {}) {
+  await warmAnnouncementStores();
+  return executeAiClassificationChunk(params);
+}
+
 async function handleCronRun(req, res) {
   if (!requireCronSecret(req, res, "Invalid cron secret.")) {
     return;
@@ -5625,6 +6102,7 @@ async function handleInternalRunAiChunk(req, res) {
   const recentCandidatePoolRaw = Number.parseInt(String(body?.recentCandidatePool ?? ""), 10);
   const recentCandidatePool = Number.isFinite(recentCandidatePoolRaw) && recentCandidatePoolRaw > 0 ? recentCandidatePoolRaw : null;
   const touchedDedupKeys = Array.isArray(body?.touchedDedupKeys) ? body.touchedDedupKeys : [];
+  const forceReclassifyKeys = Array.isArray(body?.forceReclassifyKeys) ? body.forceReclassifyKeys : [];
 
   const responsePayload = await executeAiClassificationChunk({
     trigger,
@@ -5632,7 +6110,8 @@ async function handleInternalRunAiChunk(req, res) {
     maxItems,
     scanRecentWhenNoTouched,
     recentCandidatePool,
-    touchedDedupKeys
+    touchedDedupKeys,
+    forceReclassifyKeys
   });
   if (responsePayload.ok) {
     sendJson(req, res, 200, responsePayload);
@@ -5880,7 +6359,7 @@ const server = createServer(async (req, res) => {
         "GET /api/health",
         "GET /api/status",
         "GET/POST /api/notes",
-        "GET /api/notifications/announcements?exchange=NSE|BSE|NSE+BSE|DEDUP|ALL&limit=100&symbol=TCS",
+        "GET /api/notifications/announcements?exchange=DEDUP&limit=100&offset=0&symbol=TCS&dateFrom=2026-02-01&dateTo=2026-02-07",
         "GET /api/ai/categories",
         "GET /api/ai/suggestions",
         "POST /api/ai/suggestions",
@@ -6059,7 +6538,11 @@ function getAnnouncementStoreWarmupTasks() {
   ];
 }
 
-export async function warmAnnouncementStores() {
+export async function warmAnnouncementStores(options = {}) {
+  if (options?.forceReloadFromDatabase === true && isDatabaseEnabled()) {
+    markInMemorySnapshotsStale();
+  }
+
   if (!storeWarmupPromise) {
     storeWarmupPromise = Promise.all(getAnnouncementStoreWarmupTasks()).catch((error) => {
       storeWarmupPromise = null;
