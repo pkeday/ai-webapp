@@ -2,6 +2,7 @@ import { closeDatabaseConnections, runDailyPipelineJob } from "./server.js";
 
 const jobName = "notifications-pipeline";
 const trigger = "render-cron";
+const cronPipelinePaused = normalizeText(process.env.CRON_PIPELINE_PAUSED ?? "true").toLowerCase() === "true";
 
 function normalizeText(value) {
   if (value === null || value === undefined) {
@@ -27,6 +28,14 @@ function buildCronPayload() {
 }
 
 async function main() {
+  if (cronPipelinePaused) {
+    log("Cron pipeline paused; skipping run", {
+      trigger,
+      reason: "cron-pipeline-paused"
+    });
+    return;
+  }
+
   const payload = buildCronPayload();
   log("Cron run started", {
     trigger: payload.trigger,
